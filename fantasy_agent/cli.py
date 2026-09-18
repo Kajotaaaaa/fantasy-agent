@@ -78,13 +78,18 @@ def cmd_section(args, s) -> None:
     news = None
     if args.cmd in ("lineup", "report") and getattr(args, "news", False):
         news = estimate_start_probability(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5])
+    if args.cmd == "report":
+        sections = service.report_sections(world, s, news)
+        print("\n\n".join(sections))
+        if args.telegram:
+            notify.send_report(s, sections)
+        return
     text = {
         "market": lambda: service.market_report(world, args.top),
         "trends": lambda: service.trends_report(world),
         "rivals": lambda: service.rivals_report(world),
         "clauses": lambda: service.clauses_report(world, s)[0],
         "lineup": lambda: service.lineup_report(world, news),
-        "report": lambda: service.full_report(world, s, news),
     }[args.cmd]()
     _out(s, text, args.telegram)
 
@@ -108,7 +113,7 @@ def _watch_once(store: Store, s) -> str:
             news = estimate_start_probability(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5])
         except Exception as exc:
             print(f"[titularidad] error: {exc}")
-        notify.send_telegram(s, service.full_report(world, s, news))
+        notify.send_report(s, service.report_sections(world, s, news))
         store.set("last_daily", today)
     return f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas{' · informe diario enviado' if daily_due else ''}"
 

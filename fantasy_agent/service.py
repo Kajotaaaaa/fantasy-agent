@@ -19,6 +19,8 @@ class World:
     rival_slots: list[models.SquadSlot]
     market: list[models.MarketItem]
     trends: dict[str, tuple[models.Player, analysis.Trend]] = field(default_factory=dict)
+    team_names: dict[str, str] = field(default_factory=dict)
+    fixtures: dict[str, models.Fixture] = field(default_factory=dict)
     fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -51,6 +53,29 @@ def resolve_my_team(api: FantasyAPI, s: Settings, standing: list[models.TeamStan
     raise RuntimeError("No encuentro tu equipo en la clasificación. Pon FANTASY_TEAM_ID en el .env (usa `fantasy standing`).")
 
 
+def next_fixtures(api: FantasyAPI, team_ids: set[str]) -> dict[str, models.Fixture]:
+    """Próximo partido de cada team_id: mira la jornada actual y, si falta alguno (ya jugó), la siguiente."""
+    team_ids = {t for t in team_ids if t}
+    if not team_ids:
+        return {}
+    try:
+        current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
+    except Exception:
+        return {}
+    out: dict[str, models.Fixture] = {}
+    for wk in (current, current + 1):
+        if not wk or len(out) >= len(team_ids):
+            continue
+        try:
+            fixtures = models.parse_calendar(api.calendar(wk))
+        except Exception:
+            continue
+        for f in fixtures:
+            if f.team_id in team_ids and f.team_id not in out:
+                out[f.team_id] = f
+    return out
+
+
 def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World:
     league_id, hinted_team, my_cash = resolve_league(api, s)
     standing = models.parse_standing(api.standing(league_id))
@@ -67,7 +92,8 @@ def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World
     for item in market:
         if item.player.team == "?" and item.player.team_id in team_names:
             item.player.team = team_names[item.player.team_id]
-    world = World(league_id, my_team_id, my_cash, standing, my_slots, rival_slots, market)
+    fixtures = next_fixtures(api, {sl.player.team_id for sl in my_slots})
+    world = World(league_id, my_team_id, my_cash, standing, my_slots, rival_slots, market, team_names=team_names, fixtures=fixtures)
 
     if with_trends:
         tracked = {i.player.id: i.player for i in market}
@@ -86,42 +112,64 @@ def m(amount: int | None) -> str:
     return "?" if amount is None else f"{amount / 1_000_000:.2f}M"
 
 
-def market_report(world: World, top: int = 10) -> str:
-    lines = [f"🛒 MERCADO · saldo {m(world.my_cash)}"]
+def _opportunities(world: World) -> list[analysis.Opportunity]:
     neutral = analysis.Trend(0, 0, 0)
     opps = [
         analysis.score_market_item(i, world.trends.get(i.player.id, (i.player, neutral))[1], world.my_cash)
         for i in world.market if i.player.position_id != 5
     ]
     opps.sort(key=lambda o: o.score, reverse=True)
-    for o in opps[:top]:
+    return opps
+
+
+def market_report(world: World, top: int = 5) -> str:
+    lines = [f"🛒 MERCADO PARA TU ONCE · saldo {m(world.my_cash)}"]
+    for o in _opportunities(world)[:top]:
         p, it = o.item.player, o.item
         exp = it.expires.astimezone().strftime("%d/%m %H:%M") if it.expires else "?"
-        lines.append(
-            f"• [{o.score:>5}] {p.name} ({p.position}, {p.team}) {m(it.price)} · {o.trend.label} "
-            f"({o.trend.d3:+}% 3d) · vende {it.seller} · cierra {exp}"
-        )
-        if o.reasons:
-            lines.append(f"    ↳ {'; '.join(o.reasons)}")
+        tag = " 💹" if o.investment else ""
+        why = o.reasons[0] if o.reasons else ""
+        lines.append(f"• {p.name} ({p.position}, {p.team}) {m(it.price)}{tag} · {why} · cierra {exp}")
     return "\n".join(lines)
 
 
-def trends_report(world: World) -> str:
-    risers, fallers = analysis.top_movers(world.trends)
+def investment_report(world: World, top: int = 5) -> str:
+    picks = []
+    for i in world.market:
+        if i.player.position_id == 5:
+            continue
+        trend = world.trends.get(i.player.id, (i.player, analysis.Trend(0, 0, 0)))[1]
+        s = analysis.score_investment(i, trend)
+        if s is not None:
+            picks.append((s, i, trend))
+    if not picks:
+        return ""
+    picks.sort(key=lambda x: -x[0])
+    lines = ["💹 PARA INVERTIR (comprar y revender, no para tu once)"]
+    for s, i, t in picks[:top]:
+        p = i.player
+        exp = i.expires.astimezone().strftime("%d/%m %H:%M") if i.expires else "?"
+        lines.append(f"• {p.name} ({p.team}) {m(i.price)} · {t.label} ({t.d3:+}% 3d) · cierra {exp}")
+    return "\n".join(lines)
+
+
+def trends_report(world: World, top: int = 3) -> str:
+    risers, fallers = analysis.top_movers(world.trends, n=top)
     mine = {sl.player.id for sl in world.my_slots}
-    lines = ["📊 SUBIDAS Y BAJADAS (mercado + tu plantilla, 3 días)"]
+    lines = ["📊 TENDENCIAS DE VALOR (3 días)"]
     for title, rows in (("Suben", risers), ("Bajan", fallers)):
-        lines.append(f"{title}:")
-        for p, t in rows:
-            tag = " ⭐ tuyo" if p.id in mine else ""
-            lines.append(f"  {t.label} {p.name}: {m(p.market_value)} ({t.d1:+}% 1d, {t.d3:+}% 3d, {t.d7:+}% 7d){tag}")
+        if not rows:
+            continue
+        lines.append(f"{title}: " + ", ".join(f"{p.name} ({t.d3:+}%)" for p, t in rows))
     my_falling = sorted(
         [(p, t) for pid, (p, t) in world.trends.items() if pid in mine and t.d3 <= -2], key=lambda x: x[1].d3
     )[:5]
     if my_falling:
-        lines.append("⚠️ Tuyos en caída (valora vender antes de que bajen más):")
-        lines += [f"  • {p.name} {t.d3:+}% en 3 días" for p, t in my_falling]
-    return "\n".join(lines)
+        lines.append("⚠️ Vende antes de que baje más: " + ", ".join(f"{p.name} ({t.d3:+}%)" for p, t in my_falling))
+    peaking = analysis.sell_high_candidates(world.trends, mine)
+    if peaking:
+        lines.append("🏔️ En máximo, vende ya: " + ", ".join(f"{p.name} (+{t.d7:.0f}% 7d)" for p, t in peaking))
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 def rivals_report(world: World) -> str:
@@ -151,6 +199,16 @@ def clauses_report(world: World, s: Settings) -> tuple[str, list[analysis.Clause
     return "🔐 CLÁUSULAS\n" + "\n".join(a.message for a in alerts), alerts
 
 
+def _fixture_tag(world: World, team_id: str) -> str:
+    f = world.fixtures.get(team_id)
+    if not f:
+        return ""
+    rival = world.team_names.get(f.rival_id, f"equipo #{f.rival_id}")
+    loc = "🏠" if f.home else "✈️"
+    when = f.when.astimezone().strftime("%a %d/%m %H:%M") if f.when else "?"
+    return f" · {loc} vs {rival} ({when})"
+
+
 def lineup_report(world: World, news: dict[str, dict] | None) -> str:
     cands = []
     for sl in world.my_slots:
@@ -174,7 +232,8 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
     lines = [head]
     for c in sorted(eleven, key=lambda c: c.player.position_id):
         note = f" — {c.note}" if c.note else ""
-        lines.append(f"  {c.player.position} {c.player.name}: titular {c.start_prob:.0%}, xPts {c.xpts}{note}")
+        fixture = _fixture_tag(world, c.player.team_id)
+        lines.append(f"  {c.player.position} {c.player.name}: titular {c.start_prob:.0%}, xPts {c.xpts}{note}{fixture}")
     bench = [c for c in cands if c not in eleven]
     risky = [c for c in eleven if c.start_prob < 0.6]
     if risky:
@@ -186,14 +245,22 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
     return "\n".join(lines)
 
 
-def full_report(world: World, s: Settings, news: dict[str, dict] | None) -> str:
+def report_sections(world: World, s: Settings, news: dict[str, dict] | None) -> list[str]:
+    """Un mensaje por especialidad (alineación / mercado / cláusulas), listo para Telegram.
+    Omite lo que no tenga nada relevante que decir, para no mandar un tocho."""
     stamp = world.fetched_at.astimezone().strftime("%d/%m/%Y %H:%M")
-    parts = [
-        f"⚽ INFORME LALIGA FANTASY · {stamp}",
-        clauses_report(world, s)[0],
-        market_report(world),
-        trends_report(world),
-        rivals_report(world),
-        lineup_report(world, news),
-    ]
-    return "\n\n".join(parts)
+    sections = [f"⚽ INFORME · {stamp}\n\n{lineup_report(world, news)}"]
+
+    market_parts = [p for p in (market_report(world), investment_report(world), trends_report(world)) if p]
+    if market_parts:
+        sections.append("\n\n".join(market_parts))
+
+    clauses_text, alerts = clauses_report(world, s)
+    if alerts:
+        sections.append(clauses_text)
+
+    return sections
+
+
+def full_report(world: World, s: Settings, news: dict[str, dict] | None) -> str:
+    return "\n\n".join(report_sections(world, s, news))

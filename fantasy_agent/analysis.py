@@ -47,6 +47,7 @@ class Opportunity:
     trend: Trend
     score: float
     reasons: list[str]
+    investment: bool = False
 
 
 def score_market_item(item: MarketItem, trend: Trend, my_cash: int | None) -> Opportunity:
@@ -82,7 +83,35 @@ def score_market_item(item: MarketItem, trend: Trend, my_cash: int | None) -> Op
         score -= 15
         reasons.append("no te llega el saldo")
 
-    return Opportunity(item, trend, round(score, 1), reasons)
+    # Buena INVERSIÓN (comprar y revender) ≠ buen fichaje deportivo: importa el
+    # momentum de subida y que siga barato, no cuánto puntúa.
+    investment = bool(
+        p.available
+        and trend.d3 >= 2
+        and trend.d1 >= -0.3
+        and p.market_value
+        and item.price <= p.market_value * 1.03
+    )
+    if investment:
+        reasons.append("💹 buena inversión: en subida y aún infravalorado")
+
+    return Opportunity(item, trend, round(score, 1), reasons, investment)
+
+
+def score_investment(item: MarketItem, trend: Trend) -> float | None:
+    """Puntuación centrada solo en potencial de revalorización (comprar barato, vender caro)."""
+    p = item.player
+    if not p.available or not p.market_value or item.price > p.market_value * 1.05:
+        return None
+    if trend.d3 < 1.5:
+        return None
+    return round(trend.d3 * 2 + max(trend.d1, 0) * 1.5, 1)
+
+
+def sell_high_candidates(trends: dict[str, tuple[Player, Trend]], mine: set[str]) -> list[tuple[Player, Trend]]:
+    """Jugadores tuyos que llevan una buena subida a 7 días pero ya se están frenando: venderlos ya."""
+    out = [(p, t) for pid, (p, t) in trends.items() if pid in mine and t.d7 >= 8 and t.d1 <= 0.5]
+    return sorted(out, key=lambda x: -x[1].d7)[:5]
 
 
 # ---------- alarmas de cláusulas --------------------------------------------

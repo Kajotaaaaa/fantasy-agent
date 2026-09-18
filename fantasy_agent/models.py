@@ -186,6 +186,27 @@ def parse_market(payload: Any) -> list[MarketItem]:
     return items
 
 
+@dataclass
+class Fixture:
+    team_id: str
+    rival_id: str
+    home: bool
+    when: datetime | None
+
+
+def parse_calendar(payload: Any) -> list[Fixture]:
+    out = []
+    for m in as_list(payload, "matches", "elements"):
+        local = str(pick(m, "localId", default=""))
+        visitor = str(pick(m, "visitorId", default=""))
+        when = parse_dt(pick(m, "matchDate", "date"))
+        if local:
+            out.append(Fixture(local, visitor, True, when))
+        if visitor:
+            out.append(Fixture(visitor, local, False, when))
+    return out
+
+
 def parse_value_history(payload: Any) -> list[tuple[datetime, int]]:
     out = []
     for item in as_list(payload, "marketValues", "values"):

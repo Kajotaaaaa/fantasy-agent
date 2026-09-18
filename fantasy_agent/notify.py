@@ -27,3 +27,10 @@ def send_telegram(settings: Settings, text: str) -> None:
             "text": chunk,
             "disable_web_page_preview": True,
         })
+
+
+def send_report(settings: Settings, sections: list[str]) -> None:
+    """Manda cada especialidad (alineación, mercado, cláusulas...) como un mensaje aparte."""
+    for section in sections:
+        if section.strip():
+            send_telegram(settings, section)

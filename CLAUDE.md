@@ -16,10 +16,11 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
 - `auth.py`     login Azure B2C (PKCE) y refresh de tokens
 - `api.py`      rutas de la API (GET únicamente)
 - `models.py`   normalización defensiva del JSON (claves alternativas por campo)
-- `analysis.py` tendencias, puntuación de oportunidades, alarmas de cláusula (puro, testeable)
+- `analysis.py` tendencias, puntuación de oportunidades (once vs inversión), alarmas de cláusula (puro, testeable)
 - `lineup.py`   mejor once legal por puntos esperados
 - `attendance.py` estima % de titularidad por histórico de jornadas jugadas (gratis, sin APIs externas)
-- `service.py`  construye el estado de la liga y los informes de texto
+- `service.py`  construye el estado de la liga (incl. próximos partidos vía `calendar`) y los informes de texto;
+  `report_sections()` devuelve un mensaje por especialidad para Telegram (no un solo tocho)
 - `cli.py`      comandos, bucle `watch` y `tick` (una pasada, para GitHub Actions/cron)
 - `.github/workflows/watch.yml` ejecuta `tick` cada ~30 min en GitHub Actions (repo público, estado en `actions/cache`)
 - `tests/`      `python -m unittest discover -s tests -v` (sin red, API falsa)
