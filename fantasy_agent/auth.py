@@ -97,7 +97,7 @@ def _store_tokens(settings: Settings, payload: dict) -> dict:
 def exchange_code(settings: Settings, redirect_url: str) -> dict:
     if not settings.pending_auth_file.exists():
         raise RuntimeError("No hay login pendiente. Ejecuta primero `fantasy auth url`.")
-    pending = json.loads(settings.pending_auth_file.read_text())
+    pending = json.loads(settings.pending_auth_file.read_text(encoding="utf-8-sig"))
     if time.time() - pending["created"] > 15 * 60:
         raise RuntimeError("El login pendiente ha caducado (15 min). Repite `fantasy auth url`.")
     code, state = parse_redirect(redirect_url)
@@ -123,7 +123,7 @@ def exchange_code(settings: Settings, redirect_url: str) -> dict:
 def load_tokens(settings: Settings) -> dict | None:
     if not settings.tokens_file.exists():
         return None
-    return json.loads(settings.tokens_file.read_text())
+    return json.loads(settings.tokens_file.read_text(encoding="utf-8-sig"))
 
 
 def refresh(settings: Settings) -> dict:
