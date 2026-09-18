@@ -85,7 +85,7 @@ def cmd_section(args, s) -> None:
             notify.send_report(s, sections)
         return
     text = {
-        "market": lambda: service.market_report(world, args.top),
+        "market": lambda: service.market_report(world),
         "trends": lambda: service.trends_report(world),
         "rivals": lambda: service.rivals_report(world),
         "clauses": lambda: service.clauses_report(world, s)[0],
@@ -162,7 +162,7 @@ def main(argv: list[str] | None = None) -> None:
 
     for name, help_ in [
         ("market", "Oportunidades de mercado"),
-        ("trends", "Subidas y bajadas de valor"),
+        ("trends", "Tus jugadores: cuáles conviene vender ya"),
         ("rivals", "Resumen de rivales"),
         ("clauses", "Alarmas de cláusulas"),
         ("lineup", "Once recomendado"),
@@ -170,7 +170,6 @@ def main(argv: list[str] | None = None) -> None:
     ]:
         p = sub.add_parser(name, help=help_)
         p.add_argument("--telegram", action="store_true", help="enviar también por Telegram")
-        p.add_argument("--top", type=int, default=10)
         if name in ("lineup", "report"):
             p.add_argument("--news", action="store_true", help="estima titularidad por histórico de jornadas jugadas")
         p.set_defaults(func=cmd_section)

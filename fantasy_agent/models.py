@@ -92,6 +92,18 @@ def parse_player(d: dict) -> Player:
     )
 
 
+def points_by_position(payload: Any) -> dict[int, list[tuple[str, int]]]:
+    """id y puntos totales de cada jugador, agrupados por posición (para detectar TOP de liga)."""
+    out: dict[int, list[tuple[str, int]]] = {}
+    for item in as_list(payload, "players", "elements"):
+        pid = str(pick(item, "id", default=""))
+        pos = to_int(pick(item, "positionId", "position.id"))
+        pts = to_int(pick(item, "points", "totalPoints"))
+        if pid and pos:
+            out.setdefault(pos, []).append((pid, pts))
+    return out
+
+
 def week_points_by_id(payload: Any) -> dict[str, list[tuple[int, int]]]:
     """id -> [(weekNumber, points), ...] a partir del listado público de jugadores."""
     out: dict[str, list[tuple[int, int]]] = {}
@@ -114,14 +126,22 @@ class SquadSlot:
     owner_name: str
     clause: int
     clause_locked_until: datetime | None
+    shielded_until: datetime | None = None
 
     def clause_open(self, now: datetime) -> bool:
-        return self.clause > 0 and (self.clause_locked_until is None or self.clause_locked_until <= now)
+        if self.clause <= 0:
+            return False
+        if self.clause_locked_until and self.clause_locked_until > now:
+            return False
+        if self.shielded_until and self.shielded_until > now:
+            return False
+        return True
 
 
 def parse_squad(team_payload: dict, team_id: str, owner_name: str) -> list[SquadSlot]:
     slots = []
     for item in as_list(team_payload, "players", "team.players"):
+        shielded = pick(item, "isShielded", default=False)
         slots.append(
             SquadSlot(
                 player=parse_player(item),
@@ -129,6 +149,7 @@ def parse_squad(team_payload: dict, team_id: str, owner_name: str) -> list[Squad
                 owner_name=owner_name,
                 clause=to_int(pick(item, "buyoutClause", "clause")),
                 clause_locked_until=parse_dt(pick(item, "buyoutClauseLockedEndTime")),
+                shielded_until=parse_dt(pick(item, "shieldedEndDate")) if shielded else None,
             )
         )
     return slots

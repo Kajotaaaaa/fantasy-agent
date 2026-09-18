@@ -12,6 +12,21 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
 - Mantener un ritmo de peticiones moderado (`REQUEST_DELAY_S`); no paralelizar contra la API.
 - Nunca imprimir ni commitear `data/tokens.json` ni `.env`.
 
+## Reglas del juego que el código ya modela
+- **Solo son pujables los anuncios con `seller == "LaLiga"`.** Lo que "vende" otro entrenador
+  de la liga privada no es pujable entre nosotros: a esos solo se llega pagando su cláusula.
+- **Cláusula "lógica"** = precio de cláusula ≤ ~1.2x el valor de mercado real (si no, aunque
+  sea una estrella, no compensa — ver `analysis.clause_alerts`, `max_ratio`).
+- **Blindaje**: un jugador puede estar `isShielded` con `shieldedEndDate` — mientras dure, su
+  cláusula NO es pagable aunque `buyoutClauseLockedEndTime` ya haya pasado. Ver `SquadSlot.clause_open`.
+- **Congelación de jornada**: la liga bloquea TODAS las cláusulas desde 24h antes del primer
+  partido de la jornada hasta que arranca ese partido. Ver `service.clause_freeze_window`.
+- **Horizonte de inversión**: comprar (puja o cláusula) blinda al jugador 14 días — las
+  proyecciones de reventa (`analysis.project_value`) usan ese horizonte, no unos pocos días.
+- **TOP de liga** (`service.league_top_ids`, top 3 por posición en puntos totales de TODA
+  LaLiga): son fichajes prioritarios, no oportunidades de inversión — se excluyen de
+  `investment_report` y aparecen siempre en `market_report` aunque su score sea bajo.
+
 ## Mapa
 - `auth.py`     login Azure B2C (PKCE) y refresh de tokens
 - `api.py`      rutas de la API (GET únicamente)

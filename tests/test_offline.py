@@ -59,7 +59,7 @@ class FakeAPI:
         if tid == "T1":
             return squad("me", cheap_clause=True)
         if tid == "T2":
-            return squad("pepe", clause_lock=(NOW + timedelta(hours=5)).isoformat())
+            return squad("pepe", clause_lock=(NOW + timedelta(hours=5)).isoformat(), cheap_clause=True)
         return squad("lola", cheap_clause=True)
 
     def market(self, lid):
@@ -67,6 +67,8 @@ class FakeAPI:
             {"playerMaster": pm("m1", "Chollo", 3, 10_000_000, 60, 7.5), "salePrice": 9_000_000,
              "expirationDate": (NOW + timedelta(hours=10)).isoformat(), "numberOfBids": 1},
             {"playerMaster": pm("m2", "Lesionado", 4, 20_000_000, 40, 5, status="injured"), "salePrice": 21_000_000,
+             "expirationDate": (NOW + timedelta(hours=10)).isoformat()},
+            {"playerMaster": pm("m3", "NoEsPujable", 3, 10_000_000, 90, 9), "salePrice": 9_500_000,
              "expirationDate": (NOW + timedelta(hours=10)).isoformat(), "sellerTeam": {"manager": {"managerName": "Pepe"}}},
         ]
 
@@ -90,15 +92,21 @@ class Tests(unittest.TestCase):
         report = service.full_report(world, self.s, news=None)
         print("\n" + report)
         self.assertIn("Chollo", report)
-        self.assertIn("se desbloquea", report)       # Pepe: bloqueadas 5h
-        self.assertIn("Puedes pagar YA", report)     # Lola: cláusula barata abierta
-        self.assertIn("Riesgo de clausulazo", report)  # la mía barata
+        self.assertIn("se libera", report)            # Pepe: bloqueadas 5h
+        self.assertIn("pagable ya", report)           # Lola: cláusula barata abierta
+        self.assertNotIn("(tuyo)", report)            # ya no avisamos de riesgo en jugadores propios
         self.assertIn("ONCE RECOMENDADO", report)
 
     def test_market_ranking(self):
         world = service.build_world(FakeAPI(), self.s)
+        opps = service._opportunities(world)
+        names = [o.item.player.name for o in opps]
+        self.assertLess(names.index("Chollo"), names.index("Lesionado"))
         txt = service.market_report(world)
-        self.assertLess(txt.index("Chollo"), txt.index("Lesionado"))
+        self.assertIn("Chollo", txt)
+        # Un jugador que "vende" otro entrenador de la liga no es pujable de verdad
+        # (solo se consigue por cláusula) y no debe salir como oportunidad de mercado.
+        self.assertNotIn("NoEsPujable", txt)
 
     def test_trend(self):
         hist = models.parse_value_history(history(10_000_000, 1.0))

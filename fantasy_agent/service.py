@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import analysis, lineup, models
 from .api import FantasyAPI
 from .config import Settings
+
+LEAGUE_TOP_N = 3  # cuántos de cada posición se consideran "TOP de la liga"
 
 
 @dataclass
@@ -21,6 +23,8 @@ class World:
     trends: dict[str, tuple[models.Player, analysis.Trend]] = field(default_factory=dict)
     team_names: dict[str, str] = field(default_factory=dict)
     fixtures: dict[str, models.Fixture] = field(default_factory=dict)
+    league_top_ids: set[str] = field(default_factory=set)
+    clause_freeze: tuple[datetime, datetime] | None = None
     fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -76,6 +80,35 @@ def next_fixtures(api: FantasyAPI, team_ids: set[str]) -> dict[str, models.Fixtu
     return out
 
 
+def league_top_ids(api: FantasyAPI, top_n: int = LEAGUE_TOP_N) -> set[str]:
+    """ids de los `top_n` jugadores con más puntos totales EN CADA posición, de toda LaLiga
+    (no solo tu liga privada): estos no son "para invertir", son fichajes prioritarios."""
+    try:
+        by_pos = models.points_by_position(api.players())
+    except Exception:
+        return set()
+    out: set[str] = set()
+    for rows in by_pos.values():
+        rows.sort(key=lambda r: -r[1])
+        out.update(pid for pid, _ in rows[:top_n])
+    return out
+
+
+def clause_freeze_window(api: FantasyAPI) -> tuple[datetime, datetime] | None:
+    """La liga bloquea TODAS las cláusulas desde 24h antes del primer partido de la jornada
+    hasta que arranca ese partido."""
+    try:
+        current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
+        fixtures = models.parse_calendar(api.calendar(current))
+    except Exception:
+        return None
+    dates = [f.when for f in fixtures if f.when]
+    if not dates:
+        return None
+    first = min(dates)
+    return first - timedelta(hours=24), first
+
+
 def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World:
     league_id, hinted_team, my_cash = resolve_league(api, s)
     standing = models.parse_standing(api.standing(league_id))
@@ -93,7 +126,11 @@ def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World
         if item.player.team == "?" and item.player.team_id in team_names:
             item.player.team = team_names[item.player.team_id]
     fixtures = next_fixtures(api, {sl.player.team_id for sl in my_slots})
-    world = World(league_id, my_team_id, my_cash, standing, my_slots, rival_slots, market, team_names=team_names, fixtures=fixtures)
+    world = World(
+        league_id, my_team_id, my_cash, standing, my_slots, rival_slots, market,
+        team_names=team_names, fixtures=fixtures,
+        league_top_ids=league_top_ids(api), clause_freeze=clause_freeze_window(api),
+    )
 
     if with_trends:
         tracked = {i.player.id: i.player for i in market}
@@ -112,31 +149,73 @@ def m(amount: int | None) -> str:
     return "?" if amount is None else f"{amount / 1_000_000:.2f}M"
 
 
+def _biddable(world: World) -> list[models.MarketItem]:
+    """Solo lo que puede pujarse de verdad: anuncios de LaLiga. Lo que 'venden' otros
+    entrenadores de la liga NO es pujable entre nosotros — a esos solo se llega por cláusula."""
+    return [i for i in world.market if i.seller == "LaLiga" and i.player.position_id != 5]
+
+
 def _opportunities(world: World) -> list[analysis.Opportunity]:
     neutral = analysis.Trend(0, 0, 0)
     opps = [
         analysis.score_market_item(i, world.trends.get(i.player.id, (i.player, neutral))[1], world.my_cash)
-        for i in world.market if i.player.position_id != 5
+        for i in _biddable(world)
     ]
     opps.sort(key=lambda o: o.score, reverse=True)
     return opps
 
 
-def market_report(world: World, top: int = 5) -> str:
-    lines = [f"🛒 MERCADO PARA TU ONCE · saldo {m(world.my_cash)}"]
-    for o in _opportunities(world)[:top]:
-        p, it = o.item.player, o.item
-        exp = it.expires.astimezone().strftime("%d/%m %H:%M") if it.expires else "?"
-        tag = " 💹" if o.investment else ""
-        why = o.reasons[0] if o.reasons else ""
-        lines.append(f"• {p.name} ({p.position}, {p.team}) {m(it.price)}{tag} · {why} · cierra {exp}")
-    return "\n".join(lines)
+def _my_avg_by_position(world: World) -> dict[int, float]:
+    by_pos: dict[int, list[float]] = {}
+    for sl in world.my_slots:
+        if sl.player.position_id == 5:
+            continue
+        by_pos.setdefault(sl.player.position_id, []).append(sl.player.avg_points)
+    return {pos: sum(vals) / len(vals) for pos, vals in by_pos.items() if vals}
+
+
+def _upgrade_reason(p: models.Player, my_avg_by_position: dict[int, float]) -> str:
+    """Motivo pensado hacia delante: lo que ya puntuó no te lo llevas tú, importa su media
+    de puntos por partido comparada con lo que ya tienes en esa posición."""
+    my_avg = my_avg_by_position.get(p.position_id)
+    if my_avg is None:
+        return f"Media {p.avg_points:.1f} pts/partido"
+    if p.avg_points > my_avg + 0.3:
+        return f"Media {p.avg_points:.1f} pts/partido, mejora tu media actual en {p.position} ({my_avg:.1f})"
+    return f"Media {p.avg_points:.1f} pts/partido (similar a tu media actual en {p.position}: {my_avg:.1f})"
+
+
+def market_report(world: World, min_score: float = 8.0) -> str:
+    """Fichajes deportivos para tu once. Un TOP de la liga sale siempre, aunque su score sea
+    bajo por precio: no es una cuestión de "compensa el precio", es que es de los mejores del
+    campeonato en su puesto y te lo estás perdiendo si no lo ves."""
+    my_avg_by_position = _my_avg_by_position(world)
+    cards = []
+    for o in _opportunities(world):
+        p = o.item.player
+        is_top = p.id in world.league_top_ids
+        if o.score < min_score and not is_top:
+            continue
+        motivo = _upgrade_reason(p, my_avg_by_position)
+        if is_top:
+            motivo = "🌟 De los mejores de LaLiga en su posición. " + motivo
+        cards.append(
+            f"{p.name}\n"
+            f"Posición: {p.position} · Equipo: {p.team}\n"
+            f"Precio: {m(o.item.price)}\n"
+            f"Motivo: {motivo}"
+        )
+    if not cards:
+        return ""
+    return "🛒 MERCADO PARA TU ONCE · saldo " + m(world.my_cash) + "\n\n" + "\n\n".join(cards)
 
 
 def investment_report(world: World, top: int = 5) -> str:
+    """Comprar barato y revender. Los TOP de la liga NO entran aquí: a esos los quieres
+    para tu equipo, no para venderlos en 14 días."""
     picks = []
-    for i in world.market:
-        if i.player.position_id == 5:
+    for i in _biddable(world):
+        if i.player.id in world.league_top_ids:
             continue
         trend = world.trends.get(i.player.id, (i.player, analysis.Trend(0, 0, 0)))[1]
         s = analysis.score_investment(i, trend)
@@ -145,31 +224,36 @@ def investment_report(world: World, top: int = 5) -> str:
     if not picks:
         return ""
     picks.sort(key=lambda x: -x[0])
-    lines = ["💹 PARA INVERTIR (comprar y revender, no para tu once)"]
+    cards = []
     for s, i, t in picks[:top]:
         p = i.player
-        exp = i.expires.astimezone().strftime("%d/%m %H:%M") if i.expires else "?"
-        lines.append(f"• {p.name} ({p.team}) {m(i.price)} · {t.label} ({t.d3:+}% 3d) · cierra {exp}")
-    return "\n".join(lines)
+        proj = analysis.project_value(i.price, t)
+        gain_pct = (proj - i.price) / i.price * 100 if i.price else 0
+        cards.append(
+            f"{p.name}\n"
+            f"Equipo: {p.team}\n"
+            f"Precio ahora: {m(i.price)}\n"
+            f"Tendencia: {t.label} ({t.d7:+}% en 7 días)\n"
+            f"Al comprarlo se blinda 14 días. Si sigue este ritmo, en 14 días: ~{m(proj)} ({gain_pct:+.0f}%)\n"
+            f"¿Pujar? (próximamente podrás confirmarlo aquí mismo)"
+        )
+    return "💹 POSIBILIDADES DE INVERSIÓN (comprar y revender, no para tu once)\n\n" + "\n\n".join(cards)
 
 
-def trends_report(world: World, top: int = 3) -> str:
-    risers, fallers = analysis.top_movers(world.trends, n=top)
+def trends_report(world: World) -> str:
     mine = {sl.player.id for sl in world.my_slots}
-    lines = ["📊 TENDENCIAS DE VALOR (3 días)"]
-    for title, rows in (("Suben", risers), ("Bajan", fallers)):
-        if not rows:
-            continue
-        lines.append(f"{title}: " + ", ".join(f"{p.name} ({t.d3:+}%)" for p, t in rows))
+    lines = []
     my_falling = sorted(
         [(p, t) for pid, (p, t) in world.trends.items() if pid in mine and t.d3 <= -2], key=lambda x: x[1].d3
     )[:5]
     if my_falling:
-        lines.append("⚠️ Vende antes de que baje más: " + ", ".join(f"{p.name} ({t.d3:+}%)" for p, t in my_falling))
+        lines.append("⚠️ Tuyos, véndelos antes de que bajen más:\n" + "\n".join(f"{p.name} ({t.d3:+}% en 3 días)" for p, t in my_falling))
     peaking = analysis.sell_high_candidates(world.trends, mine)
     if peaking:
-        lines.append("🏔️ En máximo, vende ya: " + ", ".join(f"{p.name} (+{t.d7:.0f}% 7d)" for p, t in peaking))
-    return "\n".join(lines) if len(lines) > 1 else ""
+        lines.append("🏔️ Tuyos en máximo, véndelos ya:\n" + "\n".join(f"{p.name} (+{t.d7:.0f}% en 7 días)" for p, t in peaking))
+    if not lines:
+        return ""
+    return "📊 TUS JUGADORES: vender o mantener\n\n" + "\n\n".join(lines)
 
 
 def rivals_report(world: World) -> str:
@@ -190,23 +274,27 @@ def rivals_report(world: World) -> str:
 
 
 def clauses_report(world: World, s: Settings) -> tuple[str, list[analysis.ClauseAlert]]:
+    now = datetime.now(timezone.utc)
     alerts = analysis.clause_alerts(
-        world.rival_slots, world.my_slots, world.my_cash,
-        datetime.now(timezone.utc), s.clause_window_hours,
+        world.rival_slots, world.my_cash, now, s.clause_window_hours,
+        freeze=world.clause_freeze,
     )
+    frozen_note = ""
+    if world.clause_freeze and world.clause_freeze[0] <= now < world.clause_freeze[1]:
+        until = world.clause_freeze[1].astimezone().strftime("%d/%m %H:%M")
+        frozen_note = f"\n\n⏸️ Cláusulas congeladas hasta las {until} (empieza la jornada)."
     if not alerts:
-        return f"🔐 CLÁUSULAS: nada relevante en las próximas {s.clause_window_hours}h.", alerts
-    return "🔐 CLÁUSULAS\n" + "\n".join(a.message for a in alerts), alerts
+        return f"🔐 CLÁUSULAS: nada relevante en las próximas {s.clause_window_hours}h.{frozen_note}", alerts
+    return "🔐 CLÁUSULAS\n\n" + "\n\n".join(a.message for a in alerts) + frozen_note, alerts
 
 
-def _fixture_tag(world: World, team_id: str) -> str:
+def _rival_name(world: World, team_id: str) -> str:
     f = world.fixtures.get(team_id)
     if not f:
-        return ""
+        return "?"
     rival = world.team_names.get(f.rival_id, f"equipo #{f.rival_id}")
-    loc = "🏠" if f.home else "✈️"
-    when = f.when.astimezone().strftime("%a %d/%m %H:%M") if f.when else "?"
-    return f" · {loc} vs {rival} ({when})"
+    icon = "🏠" if f.home else "✈️"
+    return f"{icon} {rival}"
 
 
 def lineup_report(world: World, news: dict[str, dict] | None) -> str:
@@ -229,17 +317,26 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
     head = f"🧩 ONCE RECOMENDADO {'-'.join(map(str, formation))} · {total} pts esperados"
     if len(eleven) < 11:
         head += f" · ⚠️ solo {len(eleven)} jugadores válidos"
-    lines = [head]
-    for c in sorted(eleven, key=lambda c: c.player.position_id):
-        note = f" — {c.note}" if c.note else ""
-        fixture = _fixture_tag(world, c.player.team_id)
-        lines.append(f"  {c.player.position} {c.player.name}: titular {c.start_prob:.0%}, xPts {c.xpts}{note}{fixture}")
-    bench = [c for c in cands if c not in eleven]
+    lines = [head, ""]
+    group_names = {1: "PORTERO", 2: "DEFENSAS", 3: "CENTROCAMPISTAS", 4: "DELANTEROS"}
+    for pos_id in (1, 2, 3, 4):
+        group = sorted((c for c in eleven if c.player.position_id == pos_id), key=lambda c: -c.xpts)
+        if not group:
+            continue
+        lines.append(group_names[pos_id])
+        for c in group:
+            lines.append(
+                f"{c.player.name}\n"
+                f"Titularidad: {c.start_prob:.0%}\n"
+                f"Puntos esperados: {c.xpts}\n"
+                f"Rival: {_rival_name(world, c.player.team_id)}\n"
+            )
     risky = [c for c in eleven if c.start_prob < 0.6]
     if risky:
-        lines.append("⚠️ Dudas en el once: " + ", ".join(c.player.name for c in risky))
-    if bench:
-        lines.append("Banquillo: " + ", ".join(f"{c.player.name} ({c.xpts})" for c in sorted(bench, key=lambda c: -c.xpts)))
+        lines.append("⚠️ Dudas en el once:")
+        for c in risky:
+            why = c.note or f"probabilidad de titularidad baja ({c.start_prob:.0%})"
+            lines.append(f"{c.player.name}: {why}")
     if news is None:
         lines.append("(Sin noticias: probabilidad de titularidad por defecto 70%. Usa --news para afinarlo.)")
     return "\n".join(lines)
