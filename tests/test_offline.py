@@ -165,6 +165,52 @@ class Tests(unittest.TestCase):
         self.assertEqual(out["2"]["start_probability"], 10)  # suelo (0 de 5, con tope mínimo)
         self.assertEqual(out["3"]["start_probability"], 70)  # sin histórico -> valor por defecto
 
+    def test_futbolfantasy_scraping_parsers(self):
+        from fantasy_agent import futbolfantasy as ff
+        from fantasy_agent.models import parse_player
+
+        index_html = (
+            '<a href="https://www.futbolfantasy.com/partidos/999-sevilla-barcelona" '
+            'class="partido hideQtip" data-tooltip="Sevilla - Barcelona" ></a>'
+        )
+        # Estructura mínima real: contenedores campo-wrapper, bloque de jugador con sus
+        # data-attributes, y el modal aparte (por id) con el nombre completo.
+        match_html = (
+            '<div class="campo-wrapper zoom-fix local liga">'
+            '<div class="jugador_1 campo camiseta-wrapper" data-index="1">'
+            '<a class="camiseta" data-probabilidad="80%" data-lesion="-1" data-onceFF="titular" '
+            'href="#" data-toggle="modal" data-target="#opcion-jugador-501">x</a></div>'
+            '<div class="jugador_2 campo camiseta-wrapper" data-index="2">'
+            '<a class="camiseta" data-probabilidad="20%" data-lesion="3" data-onceFF="duda" '
+            'href="#" data-toggle="modal" data-target="#opcion-jugador-502">x</a></div>'
+            '</div>'
+            '<div class="campo-wrapper multi-views suplentes"></div>'
+            '<div id="opcion-jugador-501"><h5 class="modal-title">Fermín López</h5></div>'
+            '<div id="opcion-jugador-502"><h5 class="modal-title">Isaac Romero</h5></div>'
+        )
+
+        self.assertEqual(ff._team_alias("Sevilla FC"), "sevilla")
+        self.assertEqual(ff._team_alias("FC Barcelona"), "barcelona")
+        self.assertEqual(ff._team_alias("Deportivo Alavés"), "alaves")  # no confundir con "RC Deportivo"
+        self.assertEqual(ff._team_alias("RC Deportivo"), "deportivo")
+
+        urls = ff._find_match_urls(index_html, {"sevilla", "barcelona"})
+        self.assertEqual(urls["sevilla"], urls["barcelona"])
+        self.assertIn("sevilla-barcelona", urls["sevilla"])
+
+        names = ff._modal_names(match_html)
+        self.assertEqual(names["501"], "Fermín López")
+
+        rows = ff._player_rows(match_html)
+        self.assertEqual(len(rows), 2)
+        by_modal = {r["modal_id"]: r for r in rows}
+        self.assertEqual(by_modal["501"]["prob"], 80)
+        self.assertEqual(by_modal["502"]["lesion"], "3")
+
+        p_fermin = parse_player({"id": "10", "nickname": "Fermín", "team": {"name": "Sevilla FC"}})
+        match = ff._match_player("Fermín López", [p_fermin])
+        self.assertEqual(match.id, "10")
+
 
 if __name__ == "__main__":
     unittest.main()

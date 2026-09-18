@@ -188,7 +188,9 @@ def _upgrade_reason(p: models.Player, my_avg_by_position: dict[int, float]) -> s
 def market_report(world: World, min_score: float = 8.0) -> str:
     """Fichajes deportivos para tu once. Un TOP de la liga sale siempre, aunque su score sea
     bajo por precio: no es una cuestión de "compensa el precio", es que es de los mejores del
-    campeonato en su puesto y te lo estás perdiendo si no lo ves."""
+    campeonato en su puesto y te lo estás perdiendo si no lo ves. Lleva también su lado
+    económico (tendencia y proyección a 14 días): fichar bien y que encima suba de valor
+    no son cosas distintas, es la misma decisión."""
     my_avg_by_position = _my_avg_by_position(world)
     cards = []
     for o in _opportunities(world):
@@ -199,11 +201,15 @@ def market_report(world: World, min_score: float = 8.0) -> str:
         motivo = _upgrade_reason(p, my_avg_by_position)
         if is_top:
             motivo = "🌟 De los mejores de LaLiga en su posición. " + motivo
+        trend = world.trends.get(p.id, (p, analysis.Trend(0, 0, 0)))[1]
+        proj = analysis.project_value(o.item.price, trend)
+        gain_pct = (proj - o.item.price) / o.item.price * 100 if o.item.price else 0
         cards.append(
             f"{p.name}\n"
             f"Posición: {p.position} · Equipo: {p.team}\n"
             f"Precio: {m(o.item.price)}\n"
-            f"Motivo: {motivo}"
+            f"Motivo: {motivo}\n"
+            f"Valor: {trend.label} ({trend.d7:+}% en 7 días) · a 14 días ~{m(proj)} ({gain_pct:+.0f}%)"
         )
     if not cards:
         return ""

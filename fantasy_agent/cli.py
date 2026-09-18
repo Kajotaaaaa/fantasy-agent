@@ -10,7 +10,7 @@ from datetime import datetime
 
 from . import auth, notify, service
 from .api import FantasyAPI
-from .attendance import estimate_start_probability
+from .attendance import estimate_titularidad
 from .config import load_settings
 from .storage import Store
 
@@ -77,7 +77,7 @@ def cmd_section(args, s) -> None:
     world = _world(api, s, trends=args.cmd in ("market", "trends", "report"))
     news = None
     if args.cmd in ("lineup", "report") and getattr(args, "news", False):
-        news = estimate_start_probability(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5])
+        news = estimate_titularidad(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5])
     if args.cmd == "report":
         sections = service.report_sections(world, s, news)
         print("\n\n".join(sections))
@@ -110,7 +110,7 @@ def _watch_once(store: Store, s) -> str:
     if daily_due:
         news = None
         try:
-            news = estimate_start_probability(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5])
+            news = estimate_titularidad(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5])
         except Exception as exc:
             print(f"[titularidad] error: {exc}")
         notify.send_report(s, service.report_sections(world, s, news))

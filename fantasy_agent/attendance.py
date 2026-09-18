@@ -7,6 +7,7 @@ que no depende de esto.
 """
 from __future__ import annotations
 
+from . import futbolfantasy
 from .api import FantasyAPI
 from .models import Player, to_int, week_points_by_id
 
@@ -32,3 +33,17 @@ def estimate_start_probability(api: FantasyAPI, players: list[Player]) -> dict[s
             "note": f"jugó {played}/{len(weeks)} de las últimas jornadas",
         }
     return results
+
+
+def estimate_titularidad(api: FantasyAPI, players: list[Player]) -> dict[str, dict]:
+    """Noticias reales (futbolfantasy.com) primero; si no encontramos a alguien —cambiaron
+    su web, no está en el campo probable, lo que sea— cae al histórico de jornadas."""
+    try:
+        real = futbolfantasy.fetch_probable_lineups(players)
+    except Exception as exc:
+        print(f"[titularidad] futbolfantasy no disponible, uso histórico: {exc}")
+        real = {}
+    missing = [p for p in players if p.id not in real]
+    if missing:
+        real.update(estimate_start_probability(api, missing))
+    return real

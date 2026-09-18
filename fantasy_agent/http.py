@@ -19,6 +19,30 @@ class HttpError(RuntimeError):
         self.body = body
 
 
+def _fetch(method: str, url: str, hdrs: dict[str, str], data: bytes | None, timeout: float, retries: int) -> str:
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", "replace")
+            # 5xx y 429 se reintentan; el resto se propaga.
+            if exc.code in (429, 500, 502, 503, 504) and attempt < retries:
+                time.sleep(2 * (attempt + 1))
+                last_exc = HttpError(exc.code, url, body)
+                continue
+            raise HttpError(exc.code, url, body) from None
+        except urllib.error.URLError as exc:
+            last_exc = exc
+            if attempt < retries:
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise
+    raise RuntimeError(f"Fallo tras reintentos: {last_exc}")
+
+
 def request_json(
     method: str,
     url: str,
@@ -41,26 +65,11 @@ def request_json(
     elif form is not None:
         data = urllib.parse.urlencode(form).encode()
         hdrs["Content-Type"] = "application/x-www-form-urlencoded"
+    raw = _fetch(method, url, hdrs, data, timeout, retries)
+    return json.loads(raw or "null")
 
-    last_exc: Exception | None = None
-    for attempt in range(retries + 1):
-        req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                raw = resp.read().decode("utf-8") or "null"
-                return json.loads(raw)
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", "replace")
-            # 5xx y 429 se reintentan; el resto se propaga.
-            if exc.code in (429, 500, 502, 503, 504) and attempt < retries:
-                time.sleep(2 * (attempt + 1))
-                last_exc = HttpError(exc.code, url, body)
-                continue
-            raise HttpError(exc.code, url, body) from None
-        except urllib.error.URLError as exc:
-            last_exc = exc
-            if attempt < retries:
-                time.sleep(2 * (attempt + 1))
-                continue
-            raise
-    raise RuntimeError(f"Fallo tras reintentos: {last_exc}")
+
+def request_text(url: str, *, headers: dict[str, str] | None = None, timeout: float = 30, retries: int = 2) -> str:
+    hdrs = {"User-Agent": USER_AGENT, "Accept": "text/html"}
+    hdrs.update(headers or {})
+    return _fetch("GET", url, hdrs, None, timeout, retries)
