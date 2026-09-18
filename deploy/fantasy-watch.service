@@ -1,0 +1,17 @@
+# systemd: copia a /etc/systemd/system/, ajusta User y rutas, y:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now fantasy-watch
+[Unit]
+Description=Vigilancia LaLiga Fantasy (alertas Telegram)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/fantasy-agent
+ExecStart=/usr/bin/python3 -m fantasy_agent watch
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

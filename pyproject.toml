@@ -1,0 +1,9 @@
+[project]
+name = "fantasy-agent"
+version = "0.1.0"
+description = "Analista de LaLiga Fantasy: mercado, rivales, cláusulas, tendencias y once ideal (solo lectura)"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+fantasy = "fantasy_agent.cli:main"
