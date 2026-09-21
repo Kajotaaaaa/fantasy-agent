@@ -6,7 +6,7 @@ haría, no toca nada) o cualquier otra cosa / vacío (apagado, el valor por defe
 
 Ciclo de un flip, con el estado en el `Store` (sobrevive entre vigilancias):
   1. `_buy` (una vez al día): puja por los mejores candidatos de inversión -> `flip_pending:<anuncio>`.
-  2. `_resolve_pending` (cada vigilancia): tras el cierre del mercado (21:02) la puja se ha
+  2. `_resolve_pending` (cada vigilancia): tras el cierre del mercado (21:00) la puja se ha
      ganado (el jugador aparece en tu plantilla -> `flip_held:<jugador>`) o se ha perdido.
   3. `_list_held` (cada vigilancia): pone a la venta lo ganado a valor de mercado.
   4. Aceptar ofertas: PENDIENTE. Nunca se ha visto una oferta real, y aceptar es irreversible;

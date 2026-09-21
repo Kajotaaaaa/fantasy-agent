@@ -616,7 +616,7 @@ def my_bids_report(world: World) -> tuple[str, dict | None]:
         note = "" if it.my_bid == minimum else f" · el mínimo ahora es {m(minimum)}"
         cards.append(f"{b(it.player.name)} · tu puja {b(m(it.my_bid))}{note} · {i(analysis.trend_words(trend))}")
         rows += _bid_rows(world, it, trend, it.player.id in world.league_top_ids, with_ceiling=False)
-    head = f"{b('📌 Tus pujas pendientes')}\n{i('Se resuelven al cierre del mercado (21:02)')}"
+    head = f"{b('📌 Tus pujas pendientes')}\n{i('Se cierran a las 21:00 en punto; el resultado tarda unos minutos')}"
     return head + "\n\n" + "\n".join(cards), _keyboard(rows)
 
 

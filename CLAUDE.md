@@ -9,6 +9,13 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   todas siguen el patrón vista-previa-por-defecto + `--confirm` para ejecutar de verdad, y
   nunca se deben disparar automáticamente sin que el usuario apruebe esa operación concreta.
 
+## Cierre de las pujas: 21:00 en punto (dato del usuario, no lo que dice la API)
+Las pujas terminan a las **21:00:00**. El `expirationDate` de los anuncios marca 21:02 y los
+movimientos de compra del historial salen con hora ~21:02: es el momento en que se procesa y
+aparecen los resultados y el mercado nuevo, unos minutos DESPUÉS del cierre real (por eso el
+estudio del mercado nuevo va a las 21:05). Cualquier cosa que actúe sobre una puja "en el
+último momento" debe terminar antes de las 21:00:00, no de las 21:02.
+
 ## Flipeo autónomo (`flip.py`) — la única parte que mueve dinero sin confirmar
 Decisión explícita del usuario (2026-09-21): flipeo autónomo, real desde el primer día, tope del
 25% del saldo. Interruptor `FLIP_MODE` (variable del repositorio en GitHub: Settings > Secrets
@@ -19,7 +26,7 @@ estado real vive en la caché de Actions, no en el SQLite local; no ejecutar `wa
 `FLIP_MODE=on` a la vez que el tick de Actions, duplicaría operaciones).
 - Ciclo (estado en el `Store`: `flip_pending:<anuncio>`, `flip_held:<jugador>`): una vez al día
   (primer tick tras `REPORT_HOUR`, cuando ya hay tendencias) `_buy` puja; cada tick
-  `_resolve_pending` mira si se ganó (el jugador aparece en tu plantilla tras el cierre 21:02)
+  `_resolve_pending` mira si se ganó (el jugador aparece en tu plantilla tras el cierre 21:00)
   y `_list_held` pone a la venta lo ganado a valor de mercado (1 intento al día, 5 máx). Solo se
   toca lo que el bot compró: nunca vende algo de tu once por su cuenta.
 - Reglas de compra (`flip_amount`/`plan_bids`): solo candidatos de `_investment_picks` (suben,
@@ -233,7 +240,7 @@ mismo).
   sin esa salida sin explicar), según si la comparte.
 - Cómo validarlo mejor: comparar saldo real antes/después de un evento de compra/venta a
   LaLiga (tipos 31/33) — hasta ahora solo está comprobado el de cláusula (tipo 1). Los
-  cierres del mercado (21:02) y las ventas dan esa comparación exacta.
+  cierres del mercado (21:00) y las ventas dan esa comparación exacta.
 - Uso: `market`/informe diario añaden "Rivales que pueden pujar: ✅ · ❔ · ❌" a cada fichaje.
 
 ## Cláusulas especulativas (caras pero con racha fuerte y sostenida)
