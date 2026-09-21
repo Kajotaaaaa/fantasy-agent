@@ -30,7 +30,22 @@ class Trend:
     d7: float
 
     @property
+    def cooling(self) -> bool:
+        """Subió a 7 días pero el corto plazo (3 días) ya no lo confirma: la "racha" que
+        cuentan los 7 días es vieja, ahora mismo se está frenando o revirtiendo."""
+        return self.d7 >= 5 and self.d3 < 1
+
+    @property
+    def recovering(self) -> bool:
+        """Al revés: cayó a 7 días pero el corto plazo ya está remontando."""
+        return self.d7 <= -5 and self.d3 > 1
+
+    @property
     def label(self) -> str:
+        if self.cooling:
+            return "🌡️ se enfría (subió a 7d, ya no)"
+        if self.recovering:
+            return "🔄 recuperando (cayó a 7d, ya sube)"
         if self.d3 >= 3:
             return "🚀 subiendo fuerte"
         if self.d3 >= 0.5:
@@ -128,9 +143,14 @@ def market_verdict(
         points -= 1.0
         reasons.append(f"Precio por encima de mercado (+{over_pct:.0f}%)")
 
-    if trend.d7 >= 5:
+    if trend.cooling:
+        points += 0.2
+        reasons.append(f"Subió a 7 días (+{trend.d7:.1f}%) pero ya se frena ({trend.d3:+.1f}% en 3 días)")
+    elif trend.d7 >= 5:
         points += 1.0
-        reasons.append(f"En racha: su valor sube ({trend.d7:+.1f}% en 7 días)")
+        reasons.append(f"En racha de verdad: sube a 7 días y sigue ahora (+{trend.d7:.1f}% / 7d, +{trend.d3:.1f}% / 3d)")
+    elif trend.recovering:
+        reasons.append(f"Cayó a 7 días pero ya está recuperando ({trend.d3:+.1f}% en 3 días)")
     elif trend.d7 <= -5:
         points -= 0.5
         reasons.append(f"Su valor está cayendo ({trend.d7:+.1f}% en 7 días)")
@@ -172,8 +192,13 @@ def project_value(current: int, trend: Trend, days: int = 14) -> int:
     """Cuánto podría valer dentro de `days` días si sigue el ritmo reciente.
     Por defecto 14 días: es lo que tarda en liberarse la cláusula tras comprar a alguien,
     así que ese es tu horizonte real para poder revenderlo. Usa el ritmo a 7 días (más
-    estable que el de 3) para no disparar la proyección por un pico de un par de días."""
-    daily_rate = trend.d7 / 7 if trend.d7 else trend.d3 / 3
+    estable que el de 3) para no disparar la proyección por un pico de un par de días —
+    salvo que la tendencia ya haya cambiado de sentido (`cooling`/`recovering`), porque
+    entonces el ritmo de 7 días describe una racha que ya terminó y el de 3 es lo vigente."""
+    if trend.cooling or trend.recovering:
+        daily_rate = trend.d3 / 3
+    else:
+        daily_rate = trend.d7 / 7 if trend.d7 else trend.d3 / 3
     return round(current * (1 + daily_rate / 100) ** days)
 
 
@@ -304,12 +329,20 @@ def clause_verdict(
     else:
         reasons.append(f"Rendimiento correcto ({p.avg_points:.1f} pts/partido de media)")
 
-    if trend.d7 >= 5:
+    if trend.cooling:
+        points += 0.3
+        reasons.append(
+            f"Subió a 7 días (+{trend.d7:.1f}%) pero se frena ahora ({trend.d3:+.1f}% en 3 días): "
+            "la racha ya es vieja, no pagues de más por ella"
+        )
+    elif trend.d7 >= 5:
         points += 1.5
-        reasons.append(f"En racha: su valor sube fuerte ({trend.d7:+.1f}% en 7 días)")
+        reasons.append(f"En racha de verdad: sube a 7 días y sigue subiendo ahora (+{trend.d7:.1f}% / 7d, +{trend.d3:.1f}% / 3d)")
     elif trend.d7 >= 1:
         points += 0.7
         reasons.append(f"Tendencia de valor positiva ({trend.d7:+.1f}% en 7 días)")
+    elif trend.recovering:
+        reasons.append(f"Cayó a 7 días pero ya está recuperando ({trend.d3:+.1f}% en 3 días)")
     elif trend.d7 <= -5:
         points -= 1.0
         reasons.append(f"Ojo: su valor está cayendo ({trend.d7:+.1f}% en 7 días)")

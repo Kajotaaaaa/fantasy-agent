@@ -53,6 +53,14 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   runner de GitHub Actions va en UTC) — nunca compares horas de juego con `datetime.now()` a
   secas.
 
+## Tendencias: 7 días puede ser una racha ya muerta
+`analysis.Trend` compara el ritmo de 7 días contra el de 3: `cooling` = subió a 7d pero el
+corto plazo ya no lo confirma (racha vieja, no pagues de más por ella); `recovering` = al
+revés, cayó a 7d pero ya remonta. `label`, `project_value` (usa el ritmo de 3 días si detecta
+`cooling`/`recovering` en vez del de 7, que ya no describe el momento actual) y los veredictos
+(`clause_verdict`, `market_verdict`) usan esto en vez de mirar `d7` solo — evita decir "en
+racha" de un valor que ya se frenó.
+
 ## Formato de los mensajes
 Los informes se mandan a Telegram con `parse_mode=HTML` (`notify.send_telegram`). Helpers en
 `analysis.py` (`b`, `i`, `esc`) para negrita/cursiva/escapado — reexportados desde `service.py`.
