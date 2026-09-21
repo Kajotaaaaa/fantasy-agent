@@ -215,10 +215,13 @@ botón "b:<id>" → Worker cambia SU fila a [✅ Confirmar · <etiqueta> "B:<id>
 - Worker: solo atiende el `TELEGRAM_CHAT_ID` configurado, exige la cabecera secreta que Telegram
   reenvía (`set-webhook`), y valida `payload` con regex antes de disparar nada. En el workflow
   la acción entra por variable de entorno (no interpolada en el script) contra inyección.
-- `action.yml` comparte el grupo de concurrencia `fantasy-watch` con el tick: dos ejecuciones
-  a la vez podrían pisarse la sesión (los refresh tokens rotan). Coste conocido: si llegan a
-  la vez un tick y otro tick mientras hay una acción pendiente, GitHub cancela la pendiente
-  más antigua; sin confirmación de Telegram el usuario lo nota y la repite (no se mueve dinero).
+- `action.yml` NO usa grupo de concurrencia (lección real, 2026-09-21): con uno compartido,
+  GitHub solo deja 1 ejecución en marcha + 1 pendiente y CANCELA EN SILENCIO las que sobran;
+  el usuario pulsó retirar a 2 jugadores seguidos y solo se retiró uno, sin ningún aviso. Para
+  no pisar la sesión del tick, el workflow solo guarda la caché si `data/tokens.json` cambió
+  (huella antes/después), así una acción que no renueva el token nunca deja una sesión vieja
+  como la más reciente. `cmd_execute_action` no sale con error tras avisar por Telegram (si no,
+  GitHub manda un correo de "workflow fallido" por cada botón que no pudo ejecutarse).
 - Mensajes con botones: `report_sections`/`clauses_report` devuelven `(texto, teclado|None)`;
   `notify.send_telegram(..., buttons=)` los adjunta (en mensajes troceados, solo al último).
 - Para añadir otra acción (pujar, vender, retirar): nueva entrada en `ACTIONS` del Worker, rama
