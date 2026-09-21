@@ -23,7 +23,12 @@ estado real vive en la caché de Actions, no en el SQLite local; no ejecutar `wa
   y `_list_held` pone a la venta lo ganado a valor de mercado (1 intento al día, 5 máx). Solo se
   toca lo que el bot compró: nunca vende algo de tu once por su cuenta.
 - Reglas de compra (`flip_amount`/`plan_bids`): solo candidatos de `_investment_picks` (suben,
-  precio ≤ 105% del valor), que sigan subiendo HOY (d1 > 0) y sin `cooling`; puja = mínimo o
+  precio ≤ 105% del valor), que sigan subiendo AHORA (hoy ≥ +0.5% y ≥ la mitad del ritmo diario
+  de los 3 últimos días: una subida que se frena no vale) y sin `cooling`. Lección real
+  (2026-09-21): la primera compra forzada fue Pablo García (+41% en 9 días, pero +7.5%, +6.7%,
+  ... ayer +1.8%, hoy +0.18%): pasó el filtro "d1 > 0" y se pujó 8.47M, un 2.2% sobre su valor,
+  porque `bid_plan` proyectaba el +4.4% de 3 días como si siguiera. Ahora `bid_plan` proyecta 3
+  días con el menor de d1 y d3/3, y `flip_amount` exige ese ritmo mínimo. Puja = mínimo o
   puja con margen, nunca > 103% del valor de mercado; comprometido (pujas pendientes + coste de
   lo comprado) ≤ 25% de (saldo + coste de lo comprado), cada puja ≤ la mitad de ese tope, ≤ 4
   flips abiertos y ≤ 3 pujas nuevas por día; lo pujado nunca supera el saldo (prohibido

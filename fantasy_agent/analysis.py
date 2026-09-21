@@ -158,14 +158,17 @@ def bid_plan(
     - `margin`: si sube (d3 > 0) y se espera que valga más de lo que cuesta el mínimo (>2%),
       puja el mínimo + la MITAD de esa ganancia esperada: la ventaja sobre el resto sale de
       regalar solo parte del beneficio, y aunque ganes sigues quedándote con la otra mitad. El
-      valor esperado proyecta el ritmo de 3 días otros 3 días (horizonte de flipeo; no se mira
-      la ventana de 7).
+      valor esperado proyecta 3 días con el ritmo diario MÁS BAJO entre el de hoy (d1) y el
+      medio de los últimos 3 (d3/3): una subida que se está frenando (Pablo García, 2026-09-21:
+      +7.5%, +6.7%... ayer +1.8%, hoy +0.18%) no debe proyectarse con la media de una racha que
+      ya pasó; no se mira la ventana de 7.
     - `ceiling`: el techo por puntos (`bid_ceiling`) para "lo quiero sí o sí" — solo si queda
       claramente por encima de la puja anterior, si no no aporta nada.
     Las cantidades se redondean a miles hacia arriba (no por debajo del mínimo)."""
     margin = expected = None
-    if trend.d3 > 0 and market_value:
-        expected = round(market_value * (1 + trend.d3 / 100))
+    daily = min(trend.d1, trend.d3 / 3)
+    if daily > 0 and market_value:
+        expected = round(market_value * (1 + daily / 100) ** 3)
         gain = expected - minimum
         if gain > minimum * 0.02:
             margin = -(-round(minimum + gain * 0.5) // 1000) * 1000

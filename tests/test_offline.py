@@ -145,8 +145,11 @@ class Tests(unittest.TestCase):
     def test_bid_plan(self):
         rising = analysis.Trend(2.0, 6.0, 12.0)
         plan = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.5, False)
-        self.assertEqual(plan.expected, 10_600_000)
-        self.assertEqual(plan.margin, 10_300_000)  # mínimo + la mitad de la ganancia esperada
+        self.assertEqual(plan.expected, 10_612_080)  # 10M al 2%/día (el menor de d1 y d3/3) durante 3 días
+        self.assertEqual(plan.margin, 10_307_000)  # mínimo + la mitad de la ganancia esperada
+        # Una subida que se frena (hoy 0.18%, media de 3 días 1.47%) proyecta con el ritmo de HOY.
+        slowing = analysis.bid_plan(8_288_386, 8_288_386, analysis.Trend(0.18, 4.4, 23.0), 3.3, 0.0, False)
+        self.assertIsNone(slowing.margin)
         self.assertEqual(plan.ceiling, 15_000_000)  # 7.5 pts / 0.5 pts-por-M
         # Sin subida no hay margen que justificar; sin referencia de mercado, ni techo.
         flat = analysis.bid_plan(10_000_000, 10_000_000, analysis.Trend(0, 0, 0), 7.5, 0, False)
@@ -183,6 +186,8 @@ class Tests(unittest.TestCase):
         # Solo lo que sigue subiendo hoy, sin enfriarse, y sin pagar >3% sobre su valor.
         self.assertIsNone(flip.flip_amount(listing(4, 10_000_000), analysis.Trend(-1.0, 4.0, 8.0)))
         self.assertIsNone(flip.flip_amount(listing(5, 10_000_000), analysis.Trend(0.5, 0.5, 9.0)))  # cooling
+        # Se frena: buena racha de 3 días pero hoy casi plano (el caso de Pablo García) -> no.
+        self.assertIsNone(flip.flip_amount(listing(7, 10_000_000), analysis.Trend(0.18, 4.4, 23.0)))
         self.assertIsNone(flip.flip_amount(listing(6, 11_000_000), rising))  # pide 10% sobre su valor
 
     def test_initial_squad_and_common_value_estimate(self):

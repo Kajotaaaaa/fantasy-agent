@@ -32,12 +32,15 @@ EXPIRY_GRACE = timedelta(minutes=20)  # margen tras el cierre antes de dar una p
 
 
 def flip_amount(item: models.MarketItem, trend: analysis.Trend) -> int | None:
-    """Cuánto pujar por este anuncio, o None si no merece un flip: sigue subiendo HOY (d1 > 0)
-    y la racha no se está enfriando, se puja el mínimo válido o, si la subida lo justifica, la
-    puja con margen (`analysis.bid_plan`) — pero nunca por encima del 103% de su valor de
-    mercado: se revende a ofertas del juego de ±5% sobre ese valor, pagar más se come el
-    margen."""
-    if trend.d1 <= 0 or trend.cooling:
+    """Cuánto pujar por este anuncio, o None si no merece un flip: sigue subiendo AHORA (hoy
+    al menos +0.5% y no menos de la mitad del ritmo diario de los últimos 3 días: una subida
+    que se frena no vale) y la racha no se está enfriando; se puja el mínimo válido o, si la
+    subida lo justifica, la puja con margen (`analysis.bid_plan`) — pero nunca por encima del
+    103% de su valor de mercado: se revende a ofertas del juego de ±5% sobre ese valor, pagar
+    más se come el margen. (Pablo García, 2026-09-21: subió +41% en 9 días pero hoy +0.18% con
+    una media de 1.5%/día: con "d1 > 0" a secas pasó el filtro y se pujó un 2.2% por encima de
+    su valor sobre una proyección inflada.)"""
+    if trend.d1 < 0.5 or trend.d1 < trend.d3 / 6 or trend.cooling:
         return None
     mv = item.player.market_value
     plan = analysis.bid_plan(service.bid_amount(item), mv, trend, item.player.avg_points, 0.0, False)
