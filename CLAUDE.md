@@ -59,6 +59,13 @@ contra la liga real de producción:
   usa `playerTeamId` (el hueco de plantilla, campo `SquadSlot.player_team_id`), NO el id
   genérico del jugador — con el id equivocado da un 409 "Buyout wanted to pay is not updated"
   que parece un problema de datos desactualizados pero es la identidad equivocada.
+  **Cantidad**: no vale pujar siempre el precio pedido. Si el anuncio pide menos que el valor
+  de mercado actual del jugador, el servidor responde 400 `030.01.01 "\"15207008\" is not a
+  valid money quantity for this player"` (Yuri, 2026-09-21: pedía 15.21M, valía 15.52M; el
+  precio del anuncio se fija en el ciclo de las 21:00 y ronda ±2-3% del valor de entonces).
+  `service.bid_amount` puja el mayor de precio pedido y valor de mercado. Hipótesis
+  consistente con los datos (Cestero, que pedía 0.1% más de lo que valía, sí coló) pero sin
+  confirmar del todo: si aún falla con `bid_amount`, mirar el error antes de tocar nada más.
 - **Poner a la venta**: `POST /league/{league_id}/market/sell`, body
   `{"playerId": playerTeamId, "salePrice": precio}`. Verificado: no cobra nada al instante,
   el juego genera ofertas (±5% del valor de mercado) en cada ciclo de mercado (21:00) durante

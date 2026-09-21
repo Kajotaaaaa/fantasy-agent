@@ -118,7 +118,9 @@ class Tests(unittest.TestCase):
 
         # Pujar: solo anuncios de LaLiga, nunca lo que vende otro mánager ni tus propios anuncios.
         self.assertEqual(codes(service.market_keyboard(world)), ["b:L100"])
-        self.assertIn("Pujar Chollo", service.market_keyboard(world)["inline_keyboard"][0][0]["text"])
+        # Chollo pide 9M pero vale 10M: se puja el mayor (el servidor rechaza pujar por debajo
+        # del valor de mercado, error 030.01.01) y el botón enseña la cantidad real.
+        self.assertIn("Pujar Chollo 10.00M", service.market_keyboard(world)["inline_keyboard"][0][0]["text"])
 
         # Retirar: tu jugador puesto a la venta (me3, anuncio L200) lleva su botón.
         text, kb = service.my_listings_report(world)

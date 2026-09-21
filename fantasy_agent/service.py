@@ -287,8 +287,17 @@ def _investment_picks(world: World, top: int = 5) -> list[tuple[models.MarketIte
     return [(item, trend) for _, item, trend in picks[:top]]
 
 
+def bid_amount(item: models.MarketItem) -> int:
+    """Cantidad a pujar: el mayor entre el precio pedido y el valor de mercado actual. El
+    anuncio puede pedir menos que lo que vale ahora el jugador (el precio se fija en el ciclo
+    de las 21:00 y el valor se actualiza después) y el servidor rechaza esa puja con
+    `030.01.01 "is not a valid money quantity for this player"` — comprobado con Yuri
+    (pedía 15.21M, valía 15.52M); Cestero, que pedía algo más de lo que valía, sí coló."""
+    return max(item.price, item.player.market_value or 0)
+
+
 def _bid_row(item: models.MarketItem) -> list[dict]:
-    return _action_row(f"💰 Pujar {item.player.name} {m(item.price)}", f"b:{item.listing_id}")
+    return _action_row(f"💰 Pujar {item.player.name} {m(bid_amount(item))}", f"b:{item.listing_id}")
 
 
 def market_report(world: World, min_score: float = 8.0) -> str:

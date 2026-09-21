@@ -101,9 +101,10 @@ def cmd_bid(args, s) -> None:
     item = next((i for i in market if i.listing_id == args.listing_id), None)
     if not item:
         sys.exit(f"No encuentro el anuncio {args.listing_id} en el mercado ahora mismo.")
-    amount = args.amount or item.price
+    amount = args.amount or service.bid_amount(item)
     print(f"Jugador: {item.player.name} ({item.player.position} · {item.player.team})")
-    print(f"Anuncio: {item.listing_id} · vendedor: {item.seller} · precio pedido: {service.m(item.price)}")
+    print(f"Anuncio: {item.listing_id} · vendedor: {item.seller} · precio pedido: {service.m(item.price)}"
+          f" · valor de mercado: {service.m(item.player.market_value)}")
     print(f"Pujarías: {service.m(amount)}")
     if not args.confirm:
         print("\n(vista previa — no se ha pujado nada. Repite con --confirm para pujar de verdad)")
@@ -225,19 +226,20 @@ def _act_clause(api, s, player_id: str) -> str:
 
 
 def _act_bid(api, s, listing_id: str) -> str:
-    """Puja al precio pedido (mínimo válido). Sin techo propio: el precio ya lo has visto en el
-    botón. Nunca por encima del saldo — regla del usuario, prohibido quedarse en negativo."""
+    """Puja la cantidad mínima válida (`service.bid_amount`, la que enseña el botón). Sin techo
+    propio. Nunca por encima del saldo — regla del usuario, prohibido quedarse en negativo."""
     league_id, _, cash = service.resolve_league(api, s)
     item = next((x for x in models.parse_market(api.market(league_id)) if x.listing_id == listing_id), None)
     if not item:
         raise RuntimeError("Ese anuncio ya no está en el mercado.")
     if item.seller != "LaLiga":
         raise RuntimeError("Solo se puede pujar por anuncios de LaLiga.")
-    if cash is not None and item.price > cash:
-        raise RuntimeError(f"No te llega el saldo ({service.m(cash)}) para pujar {service.m(item.price)}.")
-    api.bid(league_id, item.listing_id, item.price)
+    amount = service.bid_amount(item)
+    if cash is not None and amount > cash:
+        raise RuntimeError(f"No te llega el saldo ({service.m(cash)}) para pujar {service.m(amount)}.")
+    api.bid(league_id, item.listing_id, amount)
     return (
-        f"✅ {service.b('Puja enviada')}\n{service.b(item.player.name)} por {service.m(item.price)}\n"
+        f"✅ {service.b('Puja enviada')}\n{service.b(item.player.name)} por {service.m(amount)}\n"
         f"{service.i('Queda pendiente: se resuelve al cierre del mercado, el saldo no baja ya.')}"
     )
 
