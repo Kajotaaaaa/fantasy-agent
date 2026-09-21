@@ -9,6 +9,24 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   todas siguen el patrón vista-previa-por-defecto + `--confirm` para ejecutar de verdad, y
   nunca se deben disparar automáticamente sin que el usuario apruebe esa operación concreta.
 
+## Flipeo (comprar en subida, revender rápido) — reglas exactas del usuario
+`analysis.flip_decision`: con beneficio, aceptar siempre (no ser codicioso con márgenes
+pequeños). Sin beneficio y con menos de 3 días desde la compra, esperar SI la tendencia
+sigue subiendo (`trend.d3 > 0`) — el juego ofrece un precio distinto cada ciclo, no hay
+prisa. Pasados 3 días sin beneficio, priorizar liquidez: aceptar en cuanto la oferta cubra
+al menos lo pagado; evitar vender por debajo salvo que ya no quede alternativa (fecha límite
+antes de la jornada, saldo necesario, etc. — no está codificado como "vender sí o sí" incluso
+en pérdida; esa decisión final la toma el usuario cuando llegue el caso).
+`analysis.squad_can_field_eleven`: antes de proponer aceptar una venta, comprobar que la
+plantilla sin ese jugador sigue pudiendo alinear un once legal (cuerpos disponibles por
+posición, no calidad) — la regla de "nunca quedarse corto para la jornada" que pidió el
+usuario. `buy_date:<id>` en `kv` (junto a `buy_price:<id>`, ambos puestos/borrados a la vez
+por `my_transactions`) da los días transcurridos para esta lógica.
+Pendiente: conectar esto con `accept`/`reject` reales — falta ver una oferta real (campos
+`offerId`/`marketId`/importe) para terminar el parseo (`api.player_offers`, forma sin
+verificar). Autonomía acordada: SIEMPRE confirmación del usuario por operación, nunca
+autoejecutar pujas/ventas de este flujo sin preguntar primero.
+
 ## Cuándo vender: tendencia, no cuánto has perdido ya
 `analysis.sell_candidates`/`service.sell_candidates_report` (comando `sell-candidates`, y en
 el informe diario): el disparador para poner algo a la venta es que la tendencia lleve

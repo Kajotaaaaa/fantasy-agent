@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from .lineup import Candidate, best_eleven
 from .models import (
     ACTIVITY_BUY,
     ACTIVITY_CLAUSE,
@@ -689,3 +690,37 @@ def clause_theft_risk(
         if threats:
             out.append((slot, threats))
     return out
+
+
+# ---------- flipeo: comprar en subida, vender rápido con beneficio o mínima pérdida ---------
+def squad_can_field_eleven(slots: list[SquadSlot], exclude_player_id: str | None = None) -> bool:
+    """¿La plantilla (quitando `exclude_player_id`, si se da) tiene cuerpos suficientes para
+    alinear un once legal? No mira quién es mejor, solo si hay disponibles de sobra en cada
+    posición — la pregunta de seguridad antes de aceptar una venta: "¿me quedo corto para la
+    próxima jornada?". `start_prob=1.0` a propósito: aquí no importa la probabilidad real de
+    jugar, solo si hay cuerpos elegibles."""
+    cands = [
+        Candidate(sl.player, 1.0, 1.0)
+        for sl in slots
+        if sl.player.id != exclude_player_id and sl.player.position_id != 5 and sl.player.available
+    ]
+    _, eleven, _ = best_eleven(cands)
+    return len(eleven) == 11
+
+
+def flip_decision(buy_price: int, offer_amount: int, days_held: int, trend: Trend | None) -> tuple[str, str]:
+    """Qué hacer con una oferta sobre un jugador comprado para revender rápido (unos días, no
+    para quedárselo): con beneficio, aceptar siempre — no hay que ser codicioso con márgenes
+    pequeños. Sin beneficio: si la tendencia sigue subiendo y aún quedan días de margen
+    (<3), esperar una oferta mejor (el juego ofrece un precio distinto cada ciclo, no hay
+    prisa). Pasados 3 días sin beneficio, priorizar liquidez: aceptar en cuanto cubra al
+    menos lo pagado, e intentar no vender por debajo salvo que ya no quede alternativa."""
+    gain = offer_amount - buy_price
+    if gain > 0:
+        pct = gain / buy_price * 100 if buy_price else 0.0
+        return "accept", f"Beneficio: +{_fmt_m(gain)} ({pct:+.0f}%)"
+    if days_held < 3 and trend and trend.d3 > 0:
+        return "wait", f"Sin beneficio pero la tendencia sigue subiendo (+{trend.d3:.1f}% / 3d) — esperar mejor oferta"
+    if offer_amount >= buy_price:
+        return "accept", f"Día {days_held}: cubre al menos lo pagado, asegurar antes de que empeore"
+    return "wait", f"Día {days_held}: por debajo de lo pagado — esperar si aún hay margen, evitar vender en pérdida"

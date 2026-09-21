@@ -572,6 +572,7 @@ def my_transactions(api: FantasyAPI, world: World, store) -> list[str]:
         for ev in mine:
             if ev.type_id in (_TX_BUY, _TX_CLAUSE) and ev.user1_id == my_id:
                 store.set(f"buy_price:{ev.player_id}", str(ev.amount))
+                store.set(f"buy_date:{ev.player_id}", (ev.when or datetime.now(timezone.utc)).isoformat())
         return []
 
     messages = []
@@ -579,9 +580,11 @@ def my_transactions(api: FantasyAPI, world: World, store) -> list[str]:
         name = b(_player_name(api, world, ev.player_id))
         if ev.type_id == _TX_BUY:
             store.set(f"buy_price:{ev.player_id}", str(ev.amount))
+            store.set(f"buy_date:{ev.player_id}", (ev.when or datetime.now(timezone.utc)).isoformat())
             messages.append(f"{b('🛒 Compra')}\n{name}\nPagado: {m(ev.amount)}")
         elif ev.type_id == _TX_CLAUSE and ev.user1_id == my_id:
             store.set(f"buy_price:{ev.player_id}", str(ev.amount))
+            store.set(f"buy_date:{ev.player_id}", (ev.when or datetime.now(timezone.utc)).isoformat())
             messages.append(f"{b('🔐 Cláusula pagada por ti')}\n{name}\nPagaste: {m(ev.amount)}")
         elif ev.type_id == _TX_SELL or (ev.type_id == _TX_CLAUSE and ev.user2_id == my_id):
             label = b("💰 Venta") if ev.type_id == _TX_SELL else b("⚠️ Te han clausulado")
@@ -599,6 +602,7 @@ def my_transactions(api: FantasyAPI, world: World, store) -> list[str]:
             else:
                 messages.append(f"{label}\n{name}\n{verb}: {m(ev.amount)}\n{i('(sin precio de compra registrado)')}")
             store.set(f"buy_price:{ev.player_id}", "")
+            store.set(f"buy_date:{ev.player_id}", "")
     return messages
 
 
