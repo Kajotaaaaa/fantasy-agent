@@ -1,15 +1,13 @@
 name: fantasy-action
 
-# Lo dispara el Cloudflare Worker (worker/telegram-webhook.js) cuando pulsas "Sí, pagar" en
-# Telegram. Comparte grupo de concurrencia con `fantasy-watch` para no pisar la sesión/estado
-# en caché a la vez que un tick.
+# Lo dispara el Cloudflare Worker (worker/telegram-webhook.js) cuando confirmas una acción en
+# Telegram. SIN grupo de concurrencia a propósito: con uno compartido, GitHub cancela en
+# silencio las ejecuciones pendientes que sobran (solo cabe 1 en marcha + 1 en cola), y varias
+# pulsaciones seguidas se perdían sin avisar. Para no pisar la sesión de `fantasy-watch`, este
+# workflow solo guarda el estado en caché si la sesión cambió (renovó el token).
 on:
   repository_dispatch:
     types: [fantasy-action]
-
-concurrency:
-  group: fantasy-watch
-  cancel-in-progress: false
 
 jobs:
   execute:
@@ -39,6 +37,10 @@ jobs:
         env:
           FANTASY_TOKENS_JSON: ${{ secrets.FANTASY_TOKENS_JSON }}
 
+      - name: Huella de la sesión antes
+        id: before
+        run: echo "hash=$(sha256sum data/tokens.json 2>/dev/null | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
       # La acción llega por variable de entorno, no interpolada en el script: así un payload
       # raro no puede inyectar comandos de shell.
       - name: fantasy execute-action
@@ -50,8 +52,13 @@ jobs:
           FANTASY_LEAGUE_ID: ${{ secrets.FANTASY_LEAGUE_ID }}
           FANTASY_TEAM_ID: ${{ secrets.FANTASY_TEAM_ID }}
 
-      - name: Guardar estado actualizado
+      - name: Huella de la sesión después
+        id: after
         if: always()
+        run: echo "hash=$(sha256sum data/tokens.json 2>/dev/null | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Guardar estado actualizado (solo si la sesión cambió)
+        if: always() && steps.before.outputs.hash != steps.after.outputs.hash
         uses: actions/cache/save@v4
         with:
           path: data

@@ -287,8 +287,10 @@ def cmd_execute_action(args, s) -> None:
             raise RuntimeError(f"Acción no reconocida: {args.action!r}")
         notify.send_telegram(s, act(api, s, target))
     except Exception as exc:
+        # El fallo ya se entrega por Telegram; salir con error solo mandaría además un correo
+        # de "workflow fallido" de GitHub por cada botón que no pudo ejecutarse.
+        print(f"[error] {args.action}: {exc}")
         notify.send_telegram(s, f"❌ {service.b('No se pudo ejecutar')}\n{service.esc(str(exc))}")
-        raise
 
 
 def cmd_set_webhook(args, s) -> None:
