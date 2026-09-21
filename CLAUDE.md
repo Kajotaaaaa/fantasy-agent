@@ -39,15 +39,16 @@ s de Telegram -> Worker -> runner) llegan tarde, pero la hora de desbloqueo
   cláusulas de la liga (`world.clause_freeze`) espera a que termine (`fire_time`).
 - **Pagar por encima de su valor (Rodri: vale 80M, cláusula 86M):** el flujo armado NO mira si
   compensa — el veredicto de las alertas ("No compensa") es solo informativo y el botón sale
-  igual; los únicos topes son el máximo y el saldo. **Lista de deseados** `CLAUSE_WANTED`
-  (variable del repositorio; nombre o id `:` máximo en MILLONES, decimales con punto, separados
-  por comas: `Rodri:90, Yamal:150.5, 2206`): `clause_snipe.auto_arm` (en cada tick) arma solo la
-  compra de esos jugadores en cuanto falta menos de 5 h 45 min para poder pagarlos (o ya se
-  puede), si su cláusula cabe en tu máximo y en tu saldo, una vez por jugador y desbloqueo
-  (`armed:<id>:<hora>` en el Store). Lanza `repository_dispatch` con el `GITHUB_TOKEN` del propio
-  workflow (`permissions: contents: write` en watch.yml) y el trabajo recibe el máximo en la
-  acción: `a:<player_id>:<máximo_en_euros>`. Sin máximo, el tope de siempre (1.25x). Con
-  nombres repetidos arma a todos los que coincidan: usa el id.
+  igual; los únicos topes son 1.25x la cláusula y el saldo.
+- **Lista de seguimiento `CLAUSE_WANTED`** (variable del repositorio; nombres o ids separados
+  por comas: `Rodri, Yamal, 2206`): `clause_snipe.remind_wanted` (en cada tick) AVISA, una vez
+  por jugador y desbloqueo (`remind:<id>:<hora>` en el Store), cuando faltan menos de 5 h 45 min
+  para poder pagarlo (o ya está abierto), con hora al segundo, cláusula frente a su valor, TU
+  SALDO ("✅ te llega / ❌ no te llega") y el botón de armar (o de pagar si ya está abierta).
+  **NO arma nada por su cuenta**: decisión del usuario (2026-09-21), prefiere ver el importe y
+  su dinero en ese momento y decidir él si la deja cargada. (Hubo una versión que armaba sola
+  con un máximo por jugador vía `GITHUB_TOKEN`; se quitó, también los permisos `contents:
+  write` del tick.) Un ":máximo" detrás del nombre se admite pero se ignora.
 - Pruebas: `python -m fantasy_agent clause-snipe a:<id> --dry --unlock-in 45` simula un
   desbloqueo en 45 s con todo real menos el pago (mensajes marcados "(SIMULACRO)").
 - Límite: un trabajo de GitHub dura como mucho 6 h, por eso solo se arma con menos de 5 h 45 min

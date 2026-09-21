@@ -232,28 +232,43 @@ class Tests(unittest.TestCase):
 
         from fantasy_agent import clause_snipe
 
+        # El ":máximo" de la versión anterior se admite pero se ignora (el importe lo decides tú).
         self.assertEqual(
-            clause_snipe.parse_wanted("Rodri:90, Yamal:150.5, 2206,  ,Lamine Yamal:120"),
-            {"rodri": 90_000_000, "yamal": 150_500_000, "2206": None, "lamine yamal": 120_000_000},
+            clause_snipe.parse_wanted("Rodri:90, Yamal:150.5, 2206,  ,Lamine Yamal"),
+            {"rodri", "yamal", "2206", "lamine yamal"},
         )
         world = service.build_world(FakeAPI(), self.s)
         now = datetime.now(timezone.utc)
         slots = world.rival_slots
         pepe3 = next(sl for sl in slots if sl.player.id == "pepe3")  # cláusula 8.8M, bloqueada ~5 h
-        targets = lambda wanted, cash=None: clause_snipe.wanted_targets(slots, wanted, None, now, cash)  # noqa: E731
+        targets = lambda wanted: clause_snipe.wanted_targets(slots, wanted, None, now)  # noqa: E731
 
-        # Por nombre (sin distinguir mayúsculas) o por id; el máximo es lo que TÚ quieres pagar.
-        self.assertEqual([sl.player.id for sl, _, _ in targets({"pepe-j3": 9_000_000})], ["pepe3"])
-        self.assertEqual([sl.player.id for sl, _, _ in targets({"pepe3": None})], ["pepe3"])
-        found = targets({"pepe3": 90_000_000})[0]
-        self.assertEqual(found[1], 90_000_000)  # paga aunque esté muy por encima del valor: es lo que se pidió
-        self.assertIsNotNone(found[2])  # y espera al desbloqueo
-        # Si su cláusula pasa de tu máximo, o no te llega el saldo, o falta demasiado: no se arma.
-        self.assertEqual(targets({"pepe3": 5_000_000}), [])
-        self.assertEqual(targets({"pepe3": 90_000_000}, cash=1_000_000), [])
+        # Por nombre (sin distinguir mayúsculas) o por id, sin filtrar por precio ni por saldo.
+        self.assertEqual([sl.player.id for sl, _ in targets({"pepe-j3"})], ["pepe3"])
+        self.assertEqual([sl.player.id for sl, _ in targets({"pepe3"})], ["pepe3"])
+        self.assertIsNotNone(targets({"pepe3"})[0][1])  # todavía bloqueada: hay hora de desbloqueo
+        # Si falta demasiado (más de lo que aguanta un trabajo de GitHub), aún no se avisa.
         far = dataclasses.replace(pepe3, clause_locked_until=now + timedelta(hours=9))
-        self.assertEqual(clause_snipe.wanted_targets([far], {"pepe3": None}, None, now, None), [])
-        self.assertEqual(targets({"nadie": None}), [])
+        self.assertEqual(clause_snipe.wanted_targets([far], {"pepe3"}, None, now), [])
+        self.assertEqual(targets({"nadie"}), [])
+
+        # El aviso NO arma nada: manda el mensaje con la hora, la cláusula, tu saldo y el botón.
+        from fantasy_agent import clause_snipe as cs
+        sent, original, env = [], cs.notify.send_telegram, os.environ.get("CLAUSE_WANTED")
+        cs.notify.send_telegram = lambda settings, text, buttons=None: sent.append((text, buttons))
+        os.environ["CLAUSE_WANTED"] = "pepe-J3"
+        try:
+            store = Store(Path(tempfile.mkdtemp()) / "w.sqlite3")
+            self.assertEqual(cs.remind_wanted(world, store, self.s), ["aviso pepe-J3"])
+            self.assertEqual(cs.remind_wanted(world, store, self.s), [])  # una vez por desbloqueo
+        finally:
+            cs.notify.send_telegram = original
+            os.environ.pop("CLAUSE_WANTED") if env is None else os.environ.__setitem__("CLAUSE_WANTED", env)
+        self.assertEqual(len(sent), 1)
+        text, buttons = sent[0]
+        self.assertIn("se desbloquea a las", text)
+        self.assertIn("Tu saldo", text)
+        self.assertEqual(buttons["inline_keyboard"][0][0]["callback_data"], "a:pepe3")
 
     def test_snipe_plan(self):
         from fantasy_agent import snipe
