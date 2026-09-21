@@ -357,11 +357,14 @@ def cmd_clause_snipe(args, s) -> None:
     Código de acción "a:<player_id>". Como `execute-action`, no tiene vista previa."""
     if not notify.telegram_enabled(s):
         sys.exit("clause-snipe necesita Telegram configurado (informa del resultado por ahí)")
-    verb, _, player_id = args.action.partition(":")
-    if verb != "a" or not player_id.isdigit():
+    verb, player_id, *rest = args.action.split(":")
+    if verb != "a" or not player_id.isdigit() or (rest and not rest[0].isdigit()):
         sys.exit(f"Acción no reconocida: {args.action!r}")
     try:
-        clause_snipe.run(FantasyAPI(s), s, player_id, dry=args.dry, unlock_in=args.unlock_in)
+        clause_snipe.run(
+            FantasyAPI(s), s, player_id, dry=args.dry, unlock_in=args.unlock_in,
+            max_price=int(rest[0]) if rest else None,
+        )
     except Exception as exc:
         print(f"[error] {args.action}: {exc}")
         notify.send_telegram(s, f"❌ {service.b('No pude armar/ejecutar la compra')}\n{service.esc(str(exc)[:300])}")
@@ -506,6 +509,12 @@ def _watch_once(store: Store, s) -> str:
             print(f"[ofertas] {note}")
     except Exception as exc:
         print(f"[ofertas] error: {exc}")
+
+    try:
+        for note in clause_snipe.auto_arm(world, store, s):
+            print(f"[deseados] {note}")
+    except Exception as exc:
+        print(f"[deseados] error: {exc}")
 
     flip_note = ""
     try:

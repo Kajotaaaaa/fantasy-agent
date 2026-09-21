@@ -17,6 +17,7 @@ Un trabajo de GitHub dura como mucho 6 h, así que solo se acepta armar con meno
 `MAX_ARM` por delante. Durante el último minuto edita un mensaje de Telegram con la cuenta atrás."""
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -25,7 +26,7 @@ from . import models, notify, service
 from .analysis import b, esc, i
 from .api import FantasyAPI
 from .config import Settings
-from .http import HttpError
+from .http import HttpError, request_json
 from .snipe import _server_offset
 
 MAX_ARM = timedelta(hours=service.MAX_ARM_HOURS)
@@ -53,6 +54,91 @@ def fire_time(
     return t
 
 
+def parse_wanted(text: str) -> dict[str, int | None]:
+    """Lista de deseados, de la variable `CLAUSE_WANTED`: "Rodri:90, Yamal:150, 2206" ->
+    {"rodri": 90_000_000, "yamal": 150_000_000, "2206": None}. Cada entrada es un nombre o un id y,
+    opcional, el máximo en MILLONES que estás dispuesto a pagar por su cláusula (sin máximo, el
+    tope de siempre: 1.25x la cláusula del momento)."""
+    out: dict[str, int | None] = {}
+    for part in (text or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        name, sep, cap = part.rpartition(":")
+        if sep and name.strip():
+            try:
+                out[name.strip().lower()] = round(float(cap) * 1_000_000)  # decimales con punto: "150.5"
+                continue
+            except ValueError:
+                pass
+        out[part.lower()] = None
+    return out
+
+
+def wanted_targets(
+    slots: list[models.SquadSlot], wanted: dict[str, int | None], freeze: tuple[datetime, datetime] | None,
+    now: datetime, cash: int | None,
+) -> list[tuple[models.SquadSlot, int, datetime | None]]:
+    """De la lista de deseados, a quién se puede armar YA: la cláusula cabe en lo que quieres
+    pagar y en tu saldo, y falta menos de `MAX_ARM` para poder pagarla (o ya se puede).
+    Devuelve (hueco, tope, cuándo se puede pagar; None = ya)."""
+    out = []
+    for sl in slots:
+        key = next((k for k in (sl.player.id, sl.player.name.strip().lower()) if k in wanted), None)
+        if key is None or sl.player.position_id == 5:
+            continue
+        cap = wanted[key] or round(sl.clause * CAP_FACTOR)
+        if sl.clause > cap or (cash is not None and sl.clause > cash):
+            continue
+        when = fire_time(sl.clause_locked_until, freeze, now)
+        if when is not None and when - now > MAX_ARM:
+            continue
+        out.append((sl, cap, when))
+    return out
+
+
+def _dispatch_arm(player_id: str, cap: int) -> None:
+    """Lanza el trabajo de espera desde dentro de GitHub Actions (el `GITHUB_TOKEN` del propio
+    workflow puede disparar `repository_dispatch`), igual que si hubieras pulsado el botón."""
+    token, repo = os.environ.get("GITHUB_TOKEN"), os.environ.get("GITHUB_REPOSITORY")
+    if not token or not repo:
+        raise RuntimeError("Sin GITHUB_TOKEN/GITHUB_REPOSITORY: solo funciona dentro de GitHub Actions")
+    request_json(
+        "POST", f"https://api.github.com/repos/{repo}/dispatches",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"},
+        json_body={"event_type": "fantasy-clause-snipe", "client_payload": {"action": f"a:{player_id}:{cap}"}},
+        retries=0,
+    )
+
+
+def auto_arm(world: service.World, store, s: Settings) -> list[str]:
+    """Arma solo, en cada vigilancia, la compra de los jugadores de `CLAUSE_WANTED` cuando ya se
+    puede (falta menos de `MAX_ARM`): no hace falta estar pendiente de pulsar un botón. Una vez
+    por jugador y desbloqueo (`armed:<id>:<hora>` en el Store)."""
+    wanted = parse_wanted(os.environ.get("CLAUSE_WANTED", ""))
+    if not wanted:
+        return []
+    out = []
+    for sl, cap, when in wanted_targets(world.rival_slots, wanted, world.clause_freeze, datetime.now(timezone.utc), world.my_cash):
+        key = f"armed:{sl.player.id}:{when.isoformat() if when else 'open'}"
+        if store.get(key):
+            continue
+        store.set(key, "1")
+        try:
+            _dispatch_arm(sl.player.id, cap)
+        except Exception as exc:
+            store.set(key, "")  # que se reintente en la siguiente vigilancia
+            notify.send_telegram(s, f"❌ {b('No pude armar')} la compra de {b(sl.player.name)}\n{esc(str(exc)[:300])}")
+            continue
+        when_txt = f"se desbloquea a las {when.strftime('%H:%M:%S')}" if when else "ya se puede pagar"
+        notify.send_telegram(
+            s, f"⭐ {b('Lista de deseados')}: armo la compra de {b(sl.player.name)} ({esc(sl.owner_name)}), "
+               f"cláusula {b(service.m(sl.clause))}, {when_txt}. Pagaré hasta {b(service.m(cap))}.",
+        )
+        out.append(f"armado {sl.player.name}")
+    return out
+
+
 def _fresh(api: FantasyAPI, world: service.World, owner_team_id: str, owner_name: str, player_id: str):
     api.clear_cache()
     squad = models.parse_squad(api.team(world.league_id, owner_team_id), owner_team_id, owner_name)
@@ -65,7 +151,10 @@ def _mine_now(api: FantasyAPI, world: service.World, player_id: str) -> bool:
     return any(sl.player.id == player_id for sl in squad)
 
 
-def run(api: FantasyAPI, s: Settings, player_id: str, dry: bool = False, unlock_in: float | None = None) -> None:
+def run(
+    api: FantasyAPI, s: Settings, player_id: str, dry: bool = False, unlock_in: float | None = None,
+    max_price: int | None = None,
+) -> None:
     """`dry` + `unlock_in` (segundos) SOLO para pruebas: simula un desbloqueo dentro de N segundos
     y hace todo igual (esperas, cuenta atrás, revalidación) menos el pago, que se da por hecho."""
     fast = FantasyAPI(replace(s, request_delay_s=0.0))  # sin el ritmo "humano": aquí cada décima cuenta
@@ -84,7 +173,15 @@ def run(api: FantasyAPI, s: Settings, player_id: str, dry: bool = False, unlock_
     if unlock_in is not None:
         fire_at = now() + timedelta(seconds=unlock_in)
     armed_clause = slot.clause
-    cap = round(armed_clause * CAP_FACTOR)
+    # `max_price` (de la lista de deseados: "Rodri:90") manda sobre el tope por defecto: si quieres
+    # a alguien aunque cueste por encima de su valor, lo dices tú con el máximo.
+    cap = max_price or round(armed_clause * CAP_FACTOR)
+    if armed_clause > cap:
+        notify.send_telegram(
+            s, f"❌ {b('No armo la compra')}\nLa cláusula de {b(name)} ({service.m(armed_clause)}) ya pasa de "
+               f"lo que quieres pagar ({service.m(cap)}).",
+        )
+        return
     if cash is not None and armed_clause > cash:
         notify.send_telegram(
             s, f"❌ {b('No armo la compra')}\nTu saldo ({service.m(cash)}) no llega a la cláusula de {b(name)} "

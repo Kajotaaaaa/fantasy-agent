@@ -227,6 +227,34 @@ class Tests(unittest.TestCase):
         self.assertEqual(clause_snipe.fire_time(None, (NOW - timedelta(hours=1), NOW + timedelta(hours=1)), NOW),
                          NOW + timedelta(hours=1))
 
+    def test_clause_wanted_list(self):
+        import dataclasses
+
+        from fantasy_agent import clause_snipe
+
+        self.assertEqual(
+            clause_snipe.parse_wanted("Rodri:90, Yamal:150.5, 2206,  ,Lamine Yamal:120"),
+            {"rodri": 90_000_000, "yamal": 150_500_000, "2206": None, "lamine yamal": 120_000_000},
+        )
+        world = service.build_world(FakeAPI(), self.s)
+        now = datetime.now(timezone.utc)
+        slots = world.rival_slots
+        pepe3 = next(sl for sl in slots if sl.player.id == "pepe3")  # cláusula 8.8M, bloqueada ~5 h
+        targets = lambda wanted, cash=None: clause_snipe.wanted_targets(slots, wanted, None, now, cash)  # noqa: E731
+
+        # Por nombre (sin distinguir mayúsculas) o por id; el máximo es lo que TÚ quieres pagar.
+        self.assertEqual([sl.player.id for sl, _, _ in targets({"pepe-j3": 9_000_000})], ["pepe3"])
+        self.assertEqual([sl.player.id for sl, _, _ in targets({"pepe3": None})], ["pepe3"])
+        found = targets({"pepe3": 90_000_000})[0]
+        self.assertEqual(found[1], 90_000_000)  # paga aunque esté muy por encima del valor: es lo que se pidió
+        self.assertIsNotNone(found[2])  # y espera al desbloqueo
+        # Si su cláusula pasa de tu máximo, o no te llega el saldo, o falta demasiado: no se arma.
+        self.assertEqual(targets({"pepe3": 5_000_000}), [])
+        self.assertEqual(targets({"pepe3": 90_000_000}, cash=1_000_000), [])
+        far = dataclasses.replace(pepe3, clause_locked_until=now + timedelta(hours=9))
+        self.assertEqual(clause_snipe.wanted_targets([far], {"pepe3": None}, None, now, None), [])
+        self.assertEqual(targets({"nadie": None}), [])
+
     def test_snipe_plan(self):
         from fantasy_agent import snipe
 

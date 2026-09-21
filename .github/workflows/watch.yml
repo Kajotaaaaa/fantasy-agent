@@ -18,6 +18,10 @@ jobs:
   tick:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # `contents: write` deja al GITHUB_TOKEN del propio workflow lanzar `repository_dispatch`
+    # (arma sola la compra de los jugadores de CLAUSE_WANTED: clause_snipe.auto_arm).
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +55,10 @@ jobs:
           FANTASY_TEAM_ID: ${{ secrets.FANTASY_TEAM_ID }}
           # Interruptor del flipeo autónomo: variable del repositorio (Settings > Secrets and
           # variables > Actions > Variables). "on" ejecuta, "shadow" solo cuenta, vacío = apagado.
+          # Lista de deseados: "Rodri:90, Yamal:150" (nombre o id : máximo en millones a pagar por
+          # su cláusula). Armar y comprar al desbloquearse, sin pulsar nada.
+          CLAUSE_WANTED: ${{ vars.CLAUSE_WANTED }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FLIP_MODE: ${{ vars.FLIP_MODE }}
           # Freno del flipeo: cambiar el valor de FLIP_RESUME reanuda la compra tras una pausa;
           # FLIP_MAX_LOSS_M = millones perdidos en 14 días que la activan (5 por defecto).
