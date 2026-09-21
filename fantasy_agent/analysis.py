@@ -51,21 +51,22 @@ class Trend:
         """Al revés: cayó a 7 días pero el corto plazo ya está remontando."""
         return self.d7 <= -5 and self.d3 > 1
 
-    @property
-    def label(self) -> str:
-        if self.cooling:
-            return "🌡️ se enfría (subió a 7d, ya no)"
-        if self.recovering:
-            return "🔄 recuperando (cayó a 7d, ya sube)"
-        if self.d3 >= 3:
-            return "🚀 subiendo fuerte"
-        if self.d3 >= 0.5:
-            return "📈 subiendo"
-        if self.d3 <= -3:
-            return "🔻 cayendo fuerte"
-        if self.d3 <= -0.5:
-            return "📉 bajando"
-        return "➖ estable"
+def trend_words(t: "Trend") -> str:
+    """Frase corta en palabras llanas del ritmo reciente — solo día y 3 días, sin la ventana
+    de 7 días: para decidir si algo está para flipear (comprar y revender en pocos días)
+    importa el ritmo de ahora mismo, no una media más lenta de toda la semana."""
+    if abs(t.d3) < 0.5 and abs(t.d1) < 0.5:
+        return "➖ estable estos días"
+    if t.d3 >= 3:
+        arrow = "🚀"
+    elif t.d3 > 0:
+        arrow = "📈"
+    elif t.d3 <= -3:
+        arrow = "🔻"
+    else:
+        arrow = "📉"
+    verbo = "sube" if t.d3 >= 0 else "baja"
+    return f"{arrow} {verbo} un {abs(t.d1):.1f}% al día, un {abs(t.d3):.1f}% en 3 días"
 
 
 def trend_from_history(history: list[tuple[datetime, int]]) -> Trend:
@@ -175,15 +176,15 @@ def market_verdict(
 
     if trend.cooling:
         points += 0.2
-        reasons.append(f"Subió a 7 días (+{trend.d7:.1f}%) pero ya se frena ({trend.d3:+.1f}% en 3 días)")
+        reasons.append(f"Venía subiendo pero se frena ahora: {trend.d1:+.1f}% al día, {trend.d3:+.1f}% en 3 días")
     elif trend.d7 >= 5:
         points += 1.0
-        reasons.append(f"En racha de verdad: sube a 7 días y sigue ahora (+{trend.d7:.1f}% / 7d, +{trend.d3:.1f}% / 3d)")
+        reasons.append(f"En racha sostenida: sube {trend.d1:+.1f}% al día, {trend.d3:+.1f}% en 3 días")
     elif trend.recovering:
-        reasons.append(f"Cayó a 7 días pero ya está recuperando ({trend.d3:+.1f}% en 3 días)")
+        reasons.append(f"Venía cayendo pero ya recupera: {trend.d3:+.1f}% en 3 días")
     elif trend.d7 <= -5:
         points -= 0.5
-        reasons.append(f"Su valor está cayendo ({trend.d7:+.1f}% en 7 días)")
+        reasons.append(f"Su valor está cayendo: {trend.d1:+.1f}% al día, {trend.d3:+.1f}% en 3 días")
 
     if not p.available:
         points -= 3.0
@@ -363,20 +364,20 @@ def clause_verdict(
     if trend.cooling:
         points += 0.3
         reasons.append(
-            f"Subió a 7 días (+{trend.d7:.1f}%) pero se frena ahora ({trend.d3:+.1f}% en 3 días): "
+            f"Venía subiendo pero se frena ahora ({trend.d1:+.1f}% al día, {trend.d3:+.1f}% en 3 días): "
             "la racha ya es vieja, no pagues de más por ella"
         )
     elif trend.d7 >= 5:
         points += 1.5
-        reasons.append(f"En racha de verdad: sube a 7 días y sigue subiendo ahora (+{trend.d7:.1f}% / 7d, +{trend.d3:.1f}% / 3d)")
+        reasons.append(f"En racha sostenida: sube {trend.d1:+.1f}% al día, {trend.d3:+.1f}% en 3 días")
     elif trend.d7 >= 1:
         points += 0.7
-        reasons.append(f"Tendencia de valor positiva ({trend.d7:+.1f}% en 7 días)")
+        reasons.append(f"Tendencia a medio plazo positiva — ahora mismo: {trend.d1:+.1f}% al día, {trend.d3:+.1f}% en 3 días")
     elif trend.recovering:
-        reasons.append(f"Cayó a 7 días pero ya está recuperando ({trend.d3:+.1f}% en 3 días)")
+        reasons.append(f"Venía cayendo pero ya recupera: {trend.d3:+.1f}% en 3 días")
     elif trend.d7 <= -5:
         points -= 1.0
-        reasons.append(f"Ojo: su valor está cayendo ({trend.d7:+.1f}% en 7 días)")
+        reasons.append(f"Ojo: su valor está cayendo ({trend.d1:+.1f}% al día, {trend.d3:+.1f}% en 3 días)")
 
     if news:
         status = news.get("status")
@@ -556,7 +557,7 @@ def speculative_clause_verdict(
             rate /= 2
 
     reasons = [
-        f"Racha sostenida, no un pico de un día ({trend.d7:+.1f}% / 7d, {trend.d3:+.1f}% / 3d, {trend.d1:+.1f}% / 1d)",
+        f"Racha sostenida, no un pico de un día: sube {trend.d1:+.1f}% al día, {trend.d3:+.1f}% en 3 días",
         f"Pagarías {_fmt_m(price)} por algo que vale {_fmt_m(current)} ahora mismo (x{price / current:.2f})",
     ]
     if optimistic:

@@ -260,11 +260,9 @@ def market_report(world: World, min_score: float = 8.0) -> str:
             continue
         star = "🌟 " if is_top else ""
         trend = world.trends.get(p.id, (p, analysis.Trend(0, 0, 0)))[1]
-        proj = analysis.project_value(o.item.price, trend)
-        gain_pct = (proj - o.item.price) / o.item.price * 100 if o.item.price else 0
         cards.append(
             f"{star}{b(p.name)} <i>{p.position}·{esc(p.team)}</i> · {b(m(o.item.price))} · "
-            f"{p.avg_points:.1f}p · {i(f'{trend.label} {trend.d7:+.0f}%/7d → {m(proj)} ({gain_pct:+.0f}%)')}"
+            f"{p.avg_points:.1f}p · {i(analysis.trend_words(trend))}"
         )
     if not cards:
         return ""
@@ -289,11 +287,8 @@ def investment_report(world: World, top: int = 5) -> str:
     cards = []
     for score, item, t in picks[:top]:
         p = item.player
-        proj = analysis.project_value(item.price, t)
-        gain_pct = (proj - item.price) / item.price * 100 if item.price else 0
         cards.append(
-            f"{b(p.name)} <i>{esc(p.team)}</i> · {b(m(item.price))} · "
-            f"{i(f'{t.label} {t.d7:+.0f}%/7d → 14d ~{m(proj)} ({gain_pct:+.0f}%)')}"
+            f"{b(p.name)} <i>{esc(p.team)}</i> · {b(m(item.price))} · {i(analysis.trend_words(t))}"
         )
     head = f"{b('💹 Oportunidades de inversión')}\n{i('Comprar y revender, no para tu once')}"
     return head + "\n\n" + "\n".join(cards)
@@ -308,13 +303,13 @@ def trends_report(world: World) -> str:
     if my_falling:
         lines.append(
             f"{b('⚠️ Véndelos antes de que bajen más')}\n"
-            + "\n".join(f"{b(p.name)} {i(f'{t.d3:+.0f}%/3d')}" for p, t in my_falling)
+            + "\n".join(f"{b(p.name)} {i(analysis.trend_words(t))}" for p, t in my_falling)
         )
     peaking = analysis.sell_high_candidates(world.trends, mine)
     if peaking:
         lines.append(
-            f"{b('🏔️ En máximo, véndelos ya')}\n"
-            + "\n".join(f"{b(p.name)} {i(f'+{t.d7:.0f}%/7d')}" for p, t in peaking)
+            f"{b('🏔️ En máximo, ya se frena, véndelos ya')}\n"
+            + "\n".join(f"{b(p.name)} {i(analysis.trend_words(t))}" for p, t in peaking)
         )
     if not lines:
         return ""
@@ -349,10 +344,8 @@ def market_arrivals_report(world: World, store) -> str:
     cards = []
     for stars, item, trend, label, reasons in rows:
         p = item.player
-        proj = analysis.project_value(item.price, trend)
-        gain_pct = (proj - item.price) / item.price * 100 if item.price else 0
         stars_str = "★" * stars + "☆" * (4 - stars)
-        detail = " · ".join(esc(r) for r in reasons) + f" · a 14d ~{m(proj)} ({gain_pct:+.0f}%)"
+        detail = " · ".join(esc(r) for r in reasons) + " · " + analysis.trend_words(trend)
         cards.append(
             f"{b(p.name)} <i>{p.position}·{esc(p.team)}</i> · {b(m(item.price))} · {stars_str} {label}\n"
             f"{i(detail)}"
@@ -397,7 +390,7 @@ def sell_candidates_report(world: World, store) -> str:
         diff_pct = (p.market_value - buy) / buy * 100 if buy else 0
         cards.append(
             f"{b(p.name)} · {m(buy)} → {m(p.market_value)} ({diff_pct:+.0f}%) · "
-            f"{i(f'{trend.d1:+.1f}%/1d, {trend.d3:+.1f}%/3d')}"
+            f"{i(analysis.trend_words(trend))}"
         )
     head = f"{b('📉 Candidatos a vender')}\n{i('Tendencia bajando 3 días — no esperar a que caiga más')}"
     return head + "\n\n" + "\n".join(cards)
@@ -491,7 +484,9 @@ def clause_titularidad_candidates(world: World, s: Settings) -> list[models.Play
     return analysis.clause_candidate_players(world.rival_slots, now, s.clause_window_hours)
 
 
-def clauses_report(world: World, s: Settings, news: dict[str, dict] | None = None) -> tuple[str, list[analysis.ClauseAlert]]:
+def clauses_report(world: World, s: Settings, news: dict[str, dict] | None = None) -> tuple[list[str], list[analysis.ClauseAlert]]:
+    """Un mensaje de Telegram por cláusula, no todas juntas en un tocho — así cada jugador
+    puede llevar más adelante sus propios botones de acción (pagar / ignorar)."""
     now = datetime.now(timezone.utc)
     trends = {pid: t for pid, (_, t) in world.trends.items()}
     alerts = analysis.clause_alerts(
@@ -501,10 +496,14 @@ def clauses_report(world: World, s: Settings, news: dict[str, dict] | None = Non
     frozen_note = ""
     if world.clause_freeze and world.clause_freeze[0] <= now < world.clause_freeze[1]:
         until = world.clause_freeze[1].astimezone().strftime("%d/%m %H:%M")
-        frozen_note = f"\n\n{i(f'⏸️ Cláusulas congeladas hasta las {until} (empieza la jornada)')}"
+        frozen_note = i(f"⏸️ Cláusulas congeladas hasta las {until} (empieza la jornada)")
     if not alerts:
-        return f"{b('🔐 Cláusulas')}\n{i(f'Nada relevante en las próximas {s.clause_window_hours}h')}{frozen_note}", alerts
-    return f"{b('🔐 Cláusulas')}\n\n" + "\n".join(a.message for a in alerts) + frozen_note, alerts
+        head = f"{b('🔐 Cláusulas')}\n{i(f'Nada relevante en las próximas {s.clause_window_hours}h')}"
+        return [head + (("\n\n" + frozen_note) if frozen_note else "")], alerts
+    messages = [f"🔐 {a.message}" for a in alerts]
+    if frozen_note:
+        messages.append(frozen_note)
+    return messages, alerts
 
 
 def ensure_speculative_trends(api: FantasyAPI, world: World, s: Settings) -> None:
@@ -521,16 +520,16 @@ def ensure_speculative_trends(api: FantasyAPI, world: World, s: Settings) -> Non
             print(f"[aviso] sin histórico para {p.name}: {exc}")
 
 
-def speculative_clauses_report(world: World, s: Settings) -> tuple[str, list[analysis.SpeculativeAlert]]:
+def speculative_clauses_report(world: World, s: Settings) -> tuple[list[str], list[analysis.SpeculativeAlert]]:
+    """Igual que `clauses_report`: un mensaje por jugador, no todos juntos."""
     now = datetime.now(timezone.utc)
     trends = {pid: t for pid, (_, t) in world.trends.items()}
     alerts = analysis.speculative_clause_alerts(
         world.rival_slots, world.my_cash, now, freeze=world.clause_freeze, trends=trends,
     )
     if not alerts:
-        return "", alerts
-    head = f"{b('📈 Cláusulas especulativas')}\n{i('Alto riesgo: racha fuerte, pero por encima de mercado')}"
-    return head + "\n\n" + "\n".join(a.message for a in alerts), alerts
+        return [], alerts
+    return [f"📈 {a.message}" for a in alerts], alerts
 
 
 def _player_name(api: FantasyAPI, world: World, player_id: str) -> str:
@@ -679,11 +678,12 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
 def report_sections(
     world: World, s: Settings, news: dict[str, dict] | None, store=None, rival_cash: dict[str, int] | None = None,
 ) -> list[str]:
-    """Un mensaje por especialidad (alineación / mercado / cláusulas), listo para Telegram.
-    Omite lo que no tenga nada relevante que decir, para no mandar un tocho. `store` es
-    opcional: sin él no se puede saber qué pagaste por tus jugadores, así que se omite la
-    sección de corta-pérdidas. `rival_cash` opcional: sin él se omite el riesgo de que te
-    clausulen (requiere el historial completo de movimientos, más caro de pedir)."""
+    """Un mensaje por especialidad (alineación / mercado / cláusulas...), listo para Telegram.
+    Las cláusulas van una por mensaje (ver `clauses_report`), no agrupadas. Omite lo que no
+    tenga nada relevante que decir, para no mandar un tocho. `store` es opcional: sin él no se
+    puede saber qué pagaste por tus jugadores, así que se omite la sección de corta-pérdidas.
+    `rival_cash` opcional: sin él se omiten el riesgo de que te clausulen y el saldo de
+    rivales (requieren el historial completo de movimientos, más caro de pedir)."""
     stamp = world.fetched_at.astimezone().strftime("%d/%m/%Y %H:%M")
     sections = [f"{b('⚽ Informe')}\n{i(stamp)}\n\n{lineup_report(world, news)}"]
 
@@ -698,14 +698,15 @@ def report_sections(
     if market_parts:
         sections.append("\n\n".join(market_parts))
 
-    clauses_text, alerts = clauses_report(world, s, news)
+    clause_messages, alerts = clauses_report(world, s, news)
     if alerts:
-        sections.append(clauses_text)
+        sections.extend(clause_messages)
 
     if rival_cash:
         theft = clause_theft_report(world, rival_cash)
         if theft:
             sections.append(theft)
+        sections.append(rivals_report(world, rival_cash))
 
     return sections
 

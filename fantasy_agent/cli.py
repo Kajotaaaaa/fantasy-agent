@@ -236,12 +236,20 @@ def cmd_section(args, s) -> None:
         if args.telegram:
             notify.send_report(s, sections)
         return
+    if args.cmd in ("clauses", "clauses-hot"):
+        if args.cmd == "clauses":
+            messages, _ = service.clauses_report(world, s, news)
+        else:
+            messages, _ = service.speculative_clauses_report(world, s)
+            if not messages:
+                messages = ["Nada especulativo ahora mismo."]
+        for msg in messages:
+            _out(s, msg, args.telegram)
+        return
     text = {
         "market": lambda: service.market_report(world),
         "trends": lambda: service.trends_report(world),
         "rivals": lambda: service.rivals_report(world, rival_cash),
-        "clauses": lambda: service.clauses_report(world, s, news)[0],
-        "clauses-hot": lambda: service.speculative_clauses_report(world, s)[0] or "Nada especulativo ahora mismo.",
         "clause-risk": lambda: service.clause_theft_report(world, rival_cash) or "Ningún rival te llega ahora mismo.",
         "lineup": lambda: service.lineup_report(world, news),
         "losses": lambda: service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.",
@@ -276,15 +284,13 @@ def _watch_once(store: Store, s) -> str:
 
     _, alerts = service.clauses_report(world, s, clause_news)
     fresh = [a for a in alerts if store.alert_is_new(a.key)]
-    if fresh:
-        notify.send_telegram(s, "<b>🚨 Alertas</b>\n\n" + "\n\n".join(a.message for a in fresh))
+    for a in fresh:
+        notify.send_telegram(s, f"🚨 {a.message}")
 
     _, hot_alerts = service.speculative_clauses_report(world, s)
     fresh_hot = [a for a in hot_alerts if store.alert_is_new(a.key)]
-    if fresh_hot:
-        notify.send_telegram(
-            s, "<b>📈 Cláusulas especulativas</b>\n\n" + "\n\n".join(a.message for a in fresh_hot)
-        )
+    for a in fresh_hot:
+        notify.send_telegram(s, f"📈 {a.message}")
 
     tx = service.my_transactions(api, world, store)
     if tx:
