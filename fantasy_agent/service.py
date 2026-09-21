@@ -531,6 +531,45 @@ def sell_keyboard(world: World, store) -> dict | None:
     ])
 
 
+def offers_watch_report(world: World, store=None) -> tuple[str, dict | None]:
+    """A quién poner a escuchar ofertas de la liga: tus jugadores con la tendencia bajando
+    (d1 y d3 negativos), CON o SIN precio de compra conocido — `sell_candidates` exige ese
+    precio porque compara con lo pagado, pero para escuchar ofertas no hace falta. Los que ya
+    están en venta se marcan; los titulares de tu once recomendado se avisan (venderlos te deja
+    un hueco en el once) pero llevan botón igual, la decisión es tuya; todos los demás también."""
+    buy_prices = {pid: int(v) for pid, v in store.prefixed("buy_price:").items()} if store else {}
+    trends = {pid: t for pid, (_, t) in world.trends.items()}
+    listed = {item.player.id for item in _my_listings(world)}
+    cands = [
+        lineup.Candidate(sl.player, 0.7, lineup.expected_points(sl.player, 0.7))
+        for sl in world.my_slots if sl.player.position_id != 5
+    ]
+    starters = {c.player.id for c in lineup.best_eleven(cands)[1]}
+    falling = [
+        sl for sl in world.my_slots
+        if (t := trends.get(sl.player.id)) and t.d1 < 0 and t.d3 < 0 and sl.player.position_id != 5
+    ]
+    falling.sort(key=lambda sl: trends[sl.player.id].d3)
+    if not falling:
+        return "", None
+    cards, rows = [], []
+    for sl in falling:
+        p = sl.player
+        buy = buy_prices.get(p.id)
+        paid = f" · pagado {m(buy)} ({(p.market_value - buy) / buy * 100:+.0f}%)" if buy else ""
+        status = ""
+        if p.id in listed:
+            status = " · 📤 ya en venta"
+        else:
+            if p.id in starters:
+                status = " · ⚠️ titular en tu once"
+            if sl.player_team_id and p.market_value:
+                rows.append(_action_row(f"📤 Vender {p.name} {m(p.market_value)}", f"s:{p.id}"))
+        cards.append(f"{b(p.name)} · vale {m(p.market_value)}{paid} · {i(analysis.trend_words(trends[p.id]))}{status}")
+    head = f"{b('👂 Poner a escuchar ofertas')}\n{i('Tendencia bajando: mejor vender antes de que caigan más')}"
+    return head + "\n\n" + "\n".join(cards), _keyboard(rows)
+
+
 def my_listings_report(world: World) -> tuple[str, dict | None]:
     """Tus jugadores puestos a la venta ahora, cada uno con su botón de retirarlo."""
     listings = _my_listings(world)

@@ -322,7 +322,9 @@ def cmd_set_webhook(args, s) -> None:
 
 def cmd_section(args, s) -> None:
     api = FantasyAPI(s)
-    world = _world(api, s, trends=args.cmd in ("market", "trends", "report", "losses", "sell-candidates", "market-news"))
+    world = _world(
+        api, s, trends=args.cmd in ("market", "trends", "report", "losses", "sell-candidates", "market-news", "listen"),
+    )
     if args.cmd in ("clauses", "clauses-hot", "report"):
         service.ensure_clause_trends(api, world, s)
         service.ensure_speculative_trends(api, world, s)
@@ -334,7 +336,7 @@ def cmd_section(args, s) -> None:
         news_targets += service.clause_titularidad_candidates(world, s)
     news = estimate_titularidad(api, news_targets) if news_targets else None
 
-    store = Store(s.db_file) if args.cmd in ("report", "losses", "sell-candidates", "market-news") else None
+    store = Store(s.db_file) if args.cmd in ("report", "losses", "sell-candidates", "market-news", "listen") else None
 
     rival_cash = {}
     if args.cmd in ("rivals", "clause-risk", "advice"):
@@ -378,6 +380,9 @@ def cmd_section(args, s) -> None:
             service.sell_keyboard(world, store),
         ),
         "market-news": arrivals,
+        "listen": lambda: (
+            lambda r: (r[0] or "Ningún jugador tuyo con la tendencia bajando ahora mismo.", r[1])
+        )(service.offers_watch_report(world, store)),
         "listings": listings,
         "advice": lambda: (service.daily_advice_report(world, rival_cash), None),
     }[args.cmd]()
@@ -520,6 +525,7 @@ def main(argv: list[str] | None = None) -> None:
         ("losses", "Jugadores tuyos por debajo de lo que pagaste"),
         ("sell-candidates", "Candidatos a vender: tendencia bajando 3 días"),
         ("market-news", "Nuevo en el mercado desde el último estudio, con veredicto"),
+        ("listen", "A quién poner a escuchar ofertas (tendencia bajando), con botón de vender"),
         ("listings", "Tus jugadores en venta ahora, con botón para retirarlos"),
         ("advice", "Consejo táctico del día"),
         ("report", "Informe completo"),
