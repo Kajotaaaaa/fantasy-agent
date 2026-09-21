@@ -261,13 +261,14 @@ def market_report(world: World, min_score: float = 8.0) -> str:
         star = "🌟 " if is_top else ""
         trend = world.trends.get(p.id, (p, analysis.Trend(0, 0, 0)))[1]
         cards.append(
-            f"{star}{b(p.name)} <i>{p.position}·{esc(p.team)}</i> · {b(m(o.item.price))} · "
-            f"{p.avg_points:.1f}p · {i(analysis.trend_words(trend))}"
+            f"{star}{b(p.name)}  <i>{p.position} · {esc(p.team)}</i>\n"
+            f"💰 {b(m(o.item.price))} · {p.avg_points:.1f} pts/partido\n"
+            f"{i(analysis.trend_words(trend))}"
         )
     if not cards:
         return ""
     head = f"{b('🛒 Mercado para tu once')}\n{i('Saldo disponible: ' + m(world.my_cash))}"
-    return head + "\n\n" + "\n".join(cards)
+    return head + "\n\n" + "\n\n".join(cards)
 
 
 def investment_report(world: World, top: int = 5) -> str:
@@ -288,10 +289,12 @@ def investment_report(world: World, top: int = 5) -> str:
     for score, item, t in picks[:top]:
         p = item.player
         cards.append(
-            f"{b(p.name)} <i>{esc(p.team)}</i> · {b(m(item.price))} · {i(analysis.trend_words(t))}"
+            f"{b(p.name)}  <i>{esc(p.team)}</i>\n"
+            f"💰 {b(m(item.price))}\n"
+            f"{i(analysis.trend_words(t))}"
         )
     head = f"{b('💹 Oportunidades de inversión')}\n{i('Comprar y revender, no para tu once')}"
-    return head + "\n\n" + "\n".join(cards)
+    return head + "\n\n" + "\n\n".join(cards)
 
 
 def trends_report(world: World) -> str:
