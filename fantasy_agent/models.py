@@ -228,6 +228,40 @@ def parse_calendar(payload: Any) -> list[Fixture]:
     return out
 
 
+@dataclass
+class Activity:
+    id: str
+    type_id: int
+    user1_id: str
+    user2_id: str | None
+    player_id: str | None
+    amount: int
+    when: datetime | None
+
+
+def parse_activity(payload: Any) -> list[Activity]:
+    """Feed de movimientos de la liga (`GET .../activity/{index}`). No documentado; los
+    tipos se identificaron cruzando contra la plantilla real y el histórico de cláusulas:
+    31 = compra en el mercado de LaLiga (solo user1, comprador), 33 = venta (solo user1,
+    vendedor), 1 = cláusula pagada entre managers (user1 paga, user2 la sufre/cobra). Otros
+    tipos (4 = blindaje, 6 = bono semanal) no son transacciones de jugador y no se exponen
+    aquí como tales."""
+    out = []
+    for item in as_list(payload):
+        user2 = pick(item, "user2Id")
+        player = pick(item, "playerMasterId")
+        out.append(Activity(
+            id=str(pick(item, "id", default="")),
+            type_id=to_int(pick(item, "activityTypeId")),
+            user1_id=str(pick(item, "user1Id", default="")),
+            user2_id=str(user2) if user2 is not None else None,
+            player_id=str(player) if player is not None else None,
+            amount=to_int(pick(item, "amount")),
+            when=parse_dt(pick(item, "createdAt")),
+        ))
+    return out
+
+
 def parse_value_history(payload: Any) -> list[tuple[datetime, int]]:
     out = []
     for item in as_list(payload, "marketValues", "values"):

@@ -32,6 +32,13 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
 - **TOP de liga** (`service.league_top_ids`, top 3 por posición en puntos totales de TODA
   LaLiga): son fichajes prioritarios, no oportunidades de inversión — se excluyen de
   `investment_report` y aparecen siempre en `market_report` aunque su score sea bajo.
+- **Movimientos propios** (`service.my_transactions`, endpoint `api.activity`, sin documentar):
+  tipos identificados cruzando contra la plantilla real: `31` compra en mercado LaLiga, `33`
+  venta, `1` cláusula pagada entre managers (`user1` paga, `user2` la sufre/cobra); `4`
+  blindaje y `6` bono semanal no son transacciones de jugador. Usa como marca de agua el id de
+  actividad más alto visto (`kv.last_activity_id`, sin TTL — el feed devuelve todo el
+  histórico siempre) y cachea el precio de compra por jugador (`kv.buy_price:<id>`) para poder
+  calcular ganancia/pérdida real en la venta o cláusula siguiente.
 
 ## Mapa
 - `auth.py`     login Azure B2C (PKCE) y refresh de tokens

@@ -122,6 +122,10 @@ def _watch_once(store: Store, s) -> str:
     if fresh:
         notify.send_telegram(s, "🚨 ALERTAS\n" + "\n".join(a.message for a in fresh))
 
+    tx = service.my_transactions(api, world, store)
+    if tx:
+        notify.send_telegram(s, "📒 MOVIMIENTOS EN TU EQUIPO\n\n" + "\n\n".join(tx))
+
     if daily_due:
         news = dict(clause_news)
         try:
@@ -130,7 +134,20 @@ def _watch_once(store: Store, s) -> str:
             print(f"[titularidad] error: {exc}")
         notify.send_report(s, service.report_sections(world, s, news))
         store.set("last_daily", today)
-    return f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas{' · informe diario enviado' if daily_due else ''}"
+    return (
+        f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas · {len(tx)} movimientos"
+        f"{' · informe diario enviado' if daily_due else ''}"
+    )
+
+
+def cmd_movements(args, s) -> None:
+    """Compras/ventas/clausulas tuyas desde la ultima vez que se miro (marca de agua en sqlite)."""
+    api = FantasyAPI(s)
+    world = _world(api, s, trends=False)
+    store = Store(s.db_file)
+    tx = service.my_transactions(api, world, store)
+    text = "📒 MOVIMIENTOS EN TU EQUIPO\n\n" + "\n\n".join(tx) if tx else "Sin movimientos nuevos."
+    _out(s, text, args.telegram)
 
 
 def cmd_tick(args, s) -> None:
@@ -188,6 +205,10 @@ def main(argv: list[str] | None = None) -> None:
         if name in ("lineup", "report"):
             p.add_argument("--news", action="store_true", help="estima titularidad por histórico de jornadas jugadas")
         p.set_defaults(func=cmd_section)
+
+    p = sub.add_parser("movements", help="Compras/ventas/clausulas tuyas desde la ultima vez")
+    p.add_argument("--telegram", action="store_true", help="enviar también por Telegram")
+    p.set_defaults(func=cmd_movements)
 
     sub.add_parser("watch", help="Vigilancia continua con alertas por Telegram").set_defaults(func=cmd_watch)
     sub.add_parser("tick", help="Una sola pasada de vigilancia (para cron / GitHub Actions)").set_defaults(func=cmd_tick)

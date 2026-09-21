@@ -314,6 +314,89 @@ def clauses_report(world: World, s: Settings, news: dict[str, dict] | None = Non
     return "🔐 CLÁUSULAS\n\n" + "\n\n".join(a.message for a in alerts) + frozen_note, alerts
 
 
+def _player_name(api: FantasyAPI, world: World, player_id: str) -> str:
+    for sl in (*world.my_slots, *world.rival_slots):
+        if sl.player.id == player_id:
+            return sl.player.name
+    for item in world.market:
+        if item.player.id == player_id:
+            return item.player.name
+    # No está en la plantilla/mercado actual (p.ej. lo revendieron varias veces desde
+    # entonces): pedir su ficha suelta, que existe siempre aunque ya no circule por la liga.
+    try:
+        return models.parse_player(api.player(player_id)).name
+    except Exception:
+        return f"jugador #{player_id}"
+
+
+# Tipos del feed de actividad que son transacciones de dinero por un jugador (ver `models.parse_activity`).
+_TX_BUY, _TX_SELL, _TX_CLAUSE = 31, 33, 1
+
+
+def my_transactions(api: FantasyAPI, world: World, store) -> list[str]:
+    """Compras, ventas y cláusulas (pagadas o sufridas) tuyas desde la última vez que se miró
+    el feed de actividad, con la ganancia/pérdida calculada cuando se conoce el precio de
+    compra. Usa como marca de agua el id de actividad más alto ya visto —no un TTL— porque el
+    feed siempre devuelve el historial completo: con TTL, pasado ese tiempo se volvería a
+    notificar como si fuera nuevo. La primera vez que se ejecuta no manda nada (evita
+    reproducir toda la temporada de golpe), solo registra precios de compra recientes y arranca
+    el seguimiento desde ahí."""
+    my_id = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), None)
+    if not my_id:
+        return []
+    try:
+        events = models.parse_activity(api.activity(world.league_id, 0))
+    except Exception as exc:
+        print(f"[aviso] sin feed de actividad: {exc}")
+        return []
+
+    cold_start = store.get("last_activity_id") is None
+    last_seen = models.to_int(store.get("last_activity_id"))
+    newest = last_seen
+    mine = []
+    for ev in events:
+        eid = models.to_int(ev.id)
+        newest = max(newest, eid)
+        if eid <= last_seen or ev.player_id is None:
+            continue
+        if my_id not in (ev.user1_id, ev.user2_id):
+            continue
+        mine.append(ev)
+    store.set("last_activity_id", str(newest))
+    mine.sort(key=lambda e: models.to_int(e.id))
+
+    if cold_start:
+        for ev in mine:
+            if ev.type_id in (_TX_BUY, _TX_CLAUSE) and ev.user1_id == my_id:
+                store.set(f"buy_price:{ev.player_id}", str(ev.amount))
+        return []
+
+    messages = []
+    for ev in mine:
+        name = _player_name(api, world, ev.player_id)
+        if ev.type_id == _TX_BUY:
+            store.set(f"buy_price:{ev.player_id}", str(ev.amount))
+            messages.append(f"🛒 COMPRA\n{name}\nPagado: {m(ev.amount)}")
+        elif ev.type_id == _TX_CLAUSE and ev.user1_id == my_id:
+            store.set(f"buy_price:{ev.player_id}", str(ev.amount))
+            messages.append(f"🔐 CLÁUSULA PAGADA POR TI\n{name}\nPagaste: {m(ev.amount)}")
+        elif ev.type_id == _TX_SELL or (ev.type_id == _TX_CLAUSE and ev.user2_id == my_id):
+            label = "💰 VENTA" if ev.type_id == _TX_SELL else "⚠️ TE HAN CLAUSULADO"
+            verb = "Vendido por" if ev.type_id == _TX_SELL else "Recibiste"
+            buy = store.get(f"buy_price:{ev.player_id}")
+            if buy:
+                gain = ev.amount - int(buy)
+                pct = gain / int(buy) * 100 if int(buy) else 0.0
+                messages.append(
+                    f"{label}\n{name}\n{verb}: {m(ev.amount)}\nComprado por: {m(int(buy))}\n"
+                    f"Ganancia: {'+' if gain >= 0 else ''}{m(gain)} ({pct:+.0f}%)"
+                )
+            else:
+                messages.append(f"{label}\n{name}\n{verb}: {m(ev.amount)}\n(sin precio de compra registrado)")
+            store.set(f"buy_price:{ev.player_id}", "")
+    return messages
+
+
 def _rival_name(world: World, team_id: str) -> str:
     f = world.fixtures.get(team_id)
     if not f:
