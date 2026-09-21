@@ -42,6 +42,7 @@ class Settings:
     market_study_hour: int
     market_study_minute: int
     request_delay_s: float
+    flip_mode: str  # "on" | "shadow" | cualquier otra cosa = apagado (ver flip.py)
 
     @property
     def tokens_file(self) -> Path:
@@ -71,4 +72,5 @@ def load_settings() -> Settings:
         market_study_hour=int(os.environ.get("MARKET_STUDY_HOUR", "21")),
         market_study_minute=int(os.environ.get("MARKET_STUDY_MINUTE", "5")),
         request_delay_s=float(os.environ.get("REQUEST_DELAY_S", "0.4")),
+        flip_mode=(os.environ.get("FLIP_MODE") or "off").strip().lower(),
     )

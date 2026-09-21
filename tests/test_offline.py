@@ -158,6 +158,33 @@ class Tests(unittest.TestCase):
         cheap = analysis.bid_plan(1_000_000, 1_000_000, analysis.Trend(0, 0, 0), 3.5, 0.29, False)
         self.assertEqual(cheap.ceiling, 2_000_000)
 
+    def test_flip_plan(self):
+        from fantasy_agent import flip
+
+        def listing(n, price, value=10_000_000):
+            raw = {"id": f"F{n}", "playerMaster": pm(f"f{n}", f"Flip{n}", 3, value, 10, 5.0), "salePrice": price,
+                   "expirationDate": (NOW + timedelta(hours=10)).isoformat()}
+            return models.parse_market([raw])[0]
+
+        rising = analysis.Trend(2.0, 4.0, 8.0)
+        picks = [(listing(n, 10_000_000), rising) for n in (1, 2, 3)]
+
+        # Tope: 25% de 100M = 25M comprometidos; caben dos de ~10.2M (con margen), la tercera no.
+        plan = flip.plan_bids(picks, 100_000_000, 0, [], set(), 0)
+        self.assertEqual([it.listing_id for it, _, _ in plan], ["F1", "F2"])
+        self.assertTrue(all(10_000_000 <= amount <= 10_300_000 for _, amount, _ in plan))
+
+        # Lo ya comprometido cuenta: con 90M en pujas pendientes no queda margen ni saldo libre.
+        self.assertEqual(flip.plan_bids(picks, 100_000_000, 0, [90_000_000], set(), 1), [])
+        # Máximo de flips abiertos a la vez, y no repetir un jugador que ya tienes en juego.
+        self.assertEqual(flip.plan_bids(picks, 100_000_000, 0, [], set(), flip.MAX_OPEN), [])
+        self.assertEqual(flip.plan_bids(picks, 100_000_000, 0, [], {"f1", "f2"}, 0)[0][0].listing_id, "F3")
+
+        # Solo lo que sigue subiendo hoy, sin enfriarse, y sin pagar >3% sobre su valor.
+        self.assertIsNone(flip.flip_amount(listing(4, 10_000_000), analysis.Trend(-1.0, 4.0, 8.0)))
+        self.assertIsNone(flip.flip_amount(listing(5, 10_000_000), analysis.Trend(0.5, 0.5, 9.0)))  # cooling
+        self.assertIsNone(flip.flip_amount(listing(6, 11_000_000), rising))  # pide 10% sobre su valor
+
     def test_trend(self):
         hist = models.parse_value_history(history(10_000_000, 1.0))
         t = analysis.trend_from_history(hist)

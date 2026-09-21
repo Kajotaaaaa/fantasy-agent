@@ -6,9 +6,10 @@ import json
 import random
 import sys
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from . import auth, models, notify, service
+from . import auth, flip, models, notify, service
 from .api import FantasyAPI
 from .attendance import estimate_titularidad
 from .config import load_settings
@@ -302,6 +303,18 @@ def cmd_execute_action(args, s) -> None:
         notify.send_telegram(s, f"❌ {service.b('No se pudo ejecutar')}\n{service.esc(str(exc))}")
 
 
+def cmd_flip(args, s) -> None:
+    """Prueba del flipeo en MODO SOMBRA (siempre, aunque FLIP_MODE=on): cuenta por Telegram lo
+    que pujaría ahora mismo con el mercado real, sin pujar ni guardar nada. El estado real del
+    flipeo vive en la caché de GitHub Actions, no en tu SQLite local, así que ejecutarlo en
+    real desde aquí duplicaría operaciones."""
+    s = replace(s, flip_mode="shadow")
+    api = FantasyAPI(s)
+    world = _world(api, s, trends=True)
+    note = flip.run(api, world, Store(s.db_file), s, buy_now=True, today=datetime.now().isoformat())
+    print(note or "Sin candidatos que cumplan las reglas ahora mismo.")
+
+
 def cmd_set_webhook(args, s) -> None:
     """Una sola vez tras desplegar el Worker: le dice a Telegram a dónde mandar los botones."""
     print(json.dumps(notify.set_webhook(s, args.url, args.secret), ensure_ascii=False))
@@ -409,6 +422,14 @@ def _watch_once(store: Store, s) -> str:
     if tx:
         notify.send_telegram(s, "<b>📒 Movimientos en tu equipo</b>\n\n" + "\n\n".join(tx))
 
+    flip_note = ""
+    try:
+        flip_note = flip.run(api, world, store, s, buy_now=daily_due, today=today)
+    except Exception as exc:
+        # Un fallo del flipeo no debe tumbar el resto de la vigilancia (cláusulas, informe...).
+        print(f"[flip] error: {exc}")
+        notify.send_telegram(s, f"🤖 {service.b('Error en el flipeo')}\n{service.esc(str(exc))}")
+
     if market_due:
         arrivals, arrivals_buttons = service.market_arrivals_report(world, store)
         if arrivals:
@@ -430,6 +451,7 @@ def _watch_once(store: Store, s) -> str:
         store.set("last_daily", today)
     return (
         f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas · {len(fresh_hot)} especulativas · {len(tx)} movimientos"
+        f"{f' · flip: {flip_note}' if flip_note else ''}"
         f"{' · informe diario enviado' if daily_due else ''}"
         f"{' · estudio de mercado enviado' if market_due else ''}"
     )
@@ -543,6 +565,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("player_id", help="id del jugador (el tuyo, puesto a la venta)")
     p.add_argument("--confirm", action="store_true", help="ejecuta de verdad; sin esto solo es vista previa")
     p.set_defaults(func=cmd_withdraw)
+
+    sub.add_parser("flip", help="Prueba del flipeo en modo sombra: qué pujaría ahora (no ejecuta nada)").set_defaults(func=cmd_flip)
 
     p = sub.add_parser("set-webhook", help="Configura el webhook de Telegram hacia el Worker (una vez)")
     p.add_argument("url", help="URL pública del Worker desplegado")

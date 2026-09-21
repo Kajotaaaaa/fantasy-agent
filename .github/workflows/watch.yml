@@ -44,6 +44,9 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           FANTASY_LEAGUE_ID: ${{ secrets.FANTASY_LEAGUE_ID }}
           FANTASY_TEAM_ID: ${{ secrets.FANTASY_TEAM_ID }}
+          # Interruptor del flipeo autónomo: variable del repositorio (Settings > Secrets and
+          # variables > Actions > Variables). "on" ejecuta, "shadow" solo cuenta, vacío = apagado.
+          FLIP_MODE: ${{ vars.FLIP_MODE }}
 
       - name: Guardar estado actualizado
         if: always()

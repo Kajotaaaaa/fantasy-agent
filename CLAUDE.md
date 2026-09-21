@@ -9,6 +9,33 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   todas siguen el patrón vista-previa-por-defecto + `--confirm` para ejecutar de verdad, y
   nunca se deben disparar automáticamente sin que el usuario apruebe esa operación concreta.
 
+## Flipeo autónomo (`flip.py`) — la única parte que mueve dinero sin confirmar
+Decisión explícita del usuario (2026-09-21): flipeo autónomo, real desde el primer día, tope del
+25% del saldo. Interruptor `FLIP_MODE` (variable del repositorio en GitHub: Settings > Secrets
+and variables > Actions > Variables; lo lee `watch.yml`): `on` ejecuta, `shadow` solo cuenta lo
+que haría por Telegram, vacío/otro = apagado (por defecto). Para PARAR: ponerla a `off`.
+`python -m fantasy_agent flip` prueba en sombra contra el mercado real (siempre sombra: el
+estado real vive en la caché de Actions, no en el SQLite local; no ejecutar `watch` local con
+`FLIP_MODE=on` a la vez que el tick de Actions, duplicaría operaciones).
+- Ciclo (estado en el `Store`: `flip_pending:<anuncio>`, `flip_held:<jugador>`): una vez al día
+  (primer tick tras `REPORT_HOUR`, cuando ya hay tendencias) `_buy` puja; cada tick
+  `_resolve_pending` mira si se ganó (el jugador aparece en tu plantilla tras el cierre 21:02)
+  y `_list_held` pone a la venta lo ganado a valor de mercado (1 intento al día, 5 máx). Solo se
+  toca lo que el bot compró: nunca vende algo de tu once por su cuenta.
+- Reglas de compra (`flip_amount`/`plan_bids`): solo candidatos de `_investment_picks` (suben,
+  precio ≤ 105% del valor), que sigan subiendo HOY (d1 > 0) y sin `cooling`; puja = mínimo o
+  puja con margen, nunca > 103% del valor de mercado; comprometido (pujas pendientes + coste de
+  lo comprado) ≤ 25% de (saldo + coste de lo comprado), cada puja ≤ la mitad de ese tope, ≤ 4
+  flips abiertos y ≤ 3 pujas nuevas por día; lo pujado nunca supera el saldo (prohibido
+  quedarse en negativo). No puja por lo que sale en "Mercado para tu once" (es tu lista de
+  fichajes manuales; la API no deja ver tus propias pujas, así que no se puede saber si ya
+  pujaste a mano).
+- **PENDIENTE (bloqueante): aceptar/rechazar ofertas.** Nunca se ha visto una oferta real
+  (`player_offers`/`accept_offer` sin verificar). Hasta verificarlo con la primera oferta real
+  (Iván Azón, ciclo de las 21:00) el bot NO acepta nada: las ofertas las decides tú. Al
+  implementarlo usar `analysis.flip_decision` + `squad_can_field_eleven` (reglas del usuario más
+  abajo) y verificar el formato antes de activar la aceptación automática.
+
 ## Techo de puja (fichajes para el once, no flipeo)
 `analysis.bid_ceiling` + `service.position_ppm_benchmark`/`bid_ceiling_report` (comando
 `ceiling <player_id>`): las pujas son ciegas por diseño del juego (confirmado en el FAQ
