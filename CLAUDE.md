@@ -86,6 +86,9 @@ contra la liga real de producción:
   usa `playerTeamId` (el hueco de plantilla, campo `SquadSlot.player_team_id`), NO el id
   genérico del jugador — con el id equivocado da un 409 "Buyout wanted to pay is not updated"
   que parece un problema de datos desactualizados pero es la identidad equivocada.
+  **Pujar dos veces al mismo anuncio no duplica**: la nueva puja SOBRESCRIBE a la anterior,
+  aunque sea más baja (dato del usuario, 2026-09-21). Ojo: una puja del flipeo o de un botón
+  pisa la que hubieras hecho a mano por ese jugador.
   **Cantidad**: no vale pujar siempre el precio pedido. Si el anuncio pide menos que el valor
   de mercado actual del jugador, el servidor responde 400 `030.01.01 "\"15207008\" is not a
   valid money quantity for this player"` (Yuri, 2026-09-21: pedía 15.21M, valía 15.52M; el
