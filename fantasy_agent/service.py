@@ -682,10 +682,6 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
     now = datetime.now(timezone.utc)
     if world.next_jornada:
         head += f"\n🗓️ Empieza la jornada: {_fmt_when(world.next_jornada, now)}"
-    captain = analysis.pick_captain(eleven)
-    if captain:
-        motivo = "titular casi seguro" if captain.start_prob >= 0.75 else f"mejor opción disponible ({captain.start_prob:.0%} de jugar)"
-        head += f"\n🎽 Capitán recomendado: {b(captain.player.name)} — {i(motivo)}"
     lines = [head, ""]
     group_names = {1: "🧤 Portero", 2: "🛡️ Defensas", 3: "🎯 Centrocampistas", 4: "⚔️ Delanteros"}
     for pos_id in (1, 2, 3, 4):

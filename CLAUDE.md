@@ -166,26 +166,23 @@ no se muestra en ningún mensaje (pedido explícito del usuario: "a los 7 días 
 me hace falta, queremos algo acotando más para ver si está para flipin"). Lo que se enseña es
 `analysis.trend_words(trend)`: una frase en palabras llanas con el ritmo al día y a 3 días.
 
-## Capitán y consejo del día (estrategia, no solo datos)
+## Consejo del día (estrategia, no solo datos)
 Pedido explícito del usuario: que el bot aprenda táctica de verdad (no solo reporte datos) y
 aconseje a diario. Investigado por web (Comuniate, FútbolFantasy, JornadaPerfecta) en vez de
 inventado — son las mismas fuentes que ya salían citando este propio repo en los resultados.
-- El brazalete de capitán dobla los puntos de esa jornada (para bien y para mal). No hay
-  ningún campo de "capitán" en `/teams/{id}` (comprobado a mano contra la cuenta real): esto es
-  una recomendación de `analysis.pick_captain()`, el usuario lo aplica él mismo en la app — el
-  bot no manda ninguna escritura de alineación/capitán.
-- `pick_captain` prioriza minutos casi seguros (≥75% de titularidad) sobre puntos esperados en
-  bruto, y descarta al portero salvo que no quede otra opción: su puntuación varía poco
-  partido a partido (para bien), así que doblarla no tiene el mismo techo que un delantero o
-  centrocampista en buena racha — ningún manager de las guías consultadas recomienda capitán
-  portero salvo emergencia. Se muestra dentro de `lineup_report`, no como sección aparte.
-- `service.daily_advice_report` cierra el informe diario con un solo consejo, priorizado: si
-  hay riesgo real de que te clausulen algo importante (blindar en la app — no hay endpoint de
-  escritura para esto, solo se lee `shielded_until` de `SquadSlot`), avisa de eso primero; si
-  no, si tienes mucho dinero parado (>25% del valor de tu plantilla en cash sin invertir), avisa
-  de eso; si no hay nada urgente, rota uno de `analysis.STRATEGY_TIPS` (principios generales de
-  cláusulas/economía de las guías, uno distinto cada día por `día del año % len(...)`, para no
-  repetir el mismo consejo en cada informe).
+`service.daily_advice_report` cierra el informe diario con un solo consejo, priorizado: si hay
+riesgo real de que te clausulen algo importante (blindar en la app — no hay endpoint de
+escritura para esto, solo se lee `shielded_until` de `SquadSlot`), avisa de eso primero; si no,
+si tienes mucho dinero parado (>25% del valor de tu plantilla en cash sin invertir), avisa de
+eso; si no hay nada urgente, rota uno de `analysis.STRATEGY_TIPS` (principios generales de
+cláusulas/economía de las guías, uno distinto cada día por `día del año % len(...)`, para no
+repetir el mismo consejo en cada informe).
+
+**Nota:** hubo una primera versión con recomendación de capitán (`analysis.pick_captain`,
+mostrado en `lineup_report`). El usuario avisó de que el brazalete de capitán es una mecánica
+de la versión premium del juego y esta liga no la tiene — se eliminó por completo (código y
+tip relacionado en `STRATEGY_TIPS`). Si algún día hay premium de por medio, revisar el
+historial de git antes de reconstruirlo desde cero.
 
 ## Formato de los mensajes
 Los informes se mandan a Telegram con `parse_mode=HTML` (`notify.send_telegram`). Helpers en
