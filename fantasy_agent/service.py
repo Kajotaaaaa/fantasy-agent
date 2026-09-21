@@ -417,6 +417,32 @@ def clauses_report(world: World, s: Settings, news: dict[str, dict] | None = Non
     return f"{b('🔐 Cláusulas')}\n\n" + "\n\n".join(a.message for a in alerts) + frozen_note, alerts
 
 
+def ensure_speculative_trends(api: FantasyAPI, world: World, s: Settings) -> None:
+    """Igual que `ensure_clause_trends` pero para candidatos especulativos (cláusula cara
+    respecto a mercado, pero podría compensar si la racha es fuerte de verdad)."""
+    now = datetime.now(timezone.utc)
+    for p in analysis.speculative_clause_candidates(world.rival_slots, now):
+        if p.id in world.trends:
+            continue
+        try:
+            hist = models.parse_value_history(api.market_value_history(p.id))
+            world.trends[p.id] = (p, analysis.trend_from_history(hist))
+        except Exception as exc:
+            print(f"[aviso] sin histórico para {p.name}: {exc}")
+
+
+def speculative_clauses_report(world: World, s: Settings) -> tuple[str, list[analysis.SpeculativeAlert]]:
+    now = datetime.now(timezone.utc)
+    trends = {pid: t for pid, (_, t) in world.trends.items()}
+    alerts = analysis.speculative_clause_alerts(
+        world.rival_slots, world.my_cash, now, freeze=world.clause_freeze, trends=trends,
+    )
+    if not alerts:
+        return "", alerts
+    head = f"{b('📈 Cláusulas especulativas')}\n{i('Alto riesgo: racha fuerte, pero por encima de mercado')}"
+    return head + "\n\n" + "\n\n".join(a.message for a in alerts), alerts
+
+
 def _player_name(api: FantasyAPI, world: World, player_id: str) -> str:
     for sl in (*world.my_slots, *world.rival_slots):
         if sl.player.id == player_id:

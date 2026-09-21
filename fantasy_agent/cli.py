@@ -95,8 +95,9 @@ def _world(api, s, trends=True):
 def cmd_section(args, s) -> None:
     api = FantasyAPI(s)
     world = _world(api, s, trends=args.cmd in ("market", "trends", "report", "losses", "market-news"))
-    if args.cmd in ("clauses", "report"):
+    if args.cmd in ("clauses", "clauses-hot", "report"):
         service.ensure_clause_trends(api, world, s)
+        service.ensure_speculative_trends(api, world, s)
 
     news_targets = []
     if args.cmd in ("lineup", "report") and getattr(args, "news", False):
@@ -118,6 +119,7 @@ def cmd_section(args, s) -> None:
         "trends": lambda: service.trends_report(world),
         "rivals": lambda: service.rivals_report(world),
         "clauses": lambda: service.clauses_report(world, s, news)[0],
+        "clauses-hot": lambda: service.speculative_clauses_report(world, s)[0] or "Nada especulativo ahora mismo.",
         "lineup": lambda: service.lineup_report(world, news),
         "losses": lambda: service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.",
         "market-news": lambda: service.market_arrivals_report(world, store) or "Nada nuevo desde el último estudio.",
@@ -140,6 +142,7 @@ def _watch_once(store: Store, s) -> str:
     api = FantasyAPI(s)
     world = _world(api, s, trends=daily_due or market_due)
     service.ensure_clause_trends(api, world, s)
+    service.ensure_speculative_trends(api, world, s)
 
     clause_news = {}
     try:
@@ -151,6 +154,13 @@ def _watch_once(store: Store, s) -> str:
     fresh = [a for a in alerts if store.alert_is_new(a.key)]
     if fresh:
         notify.send_telegram(s, "<b>🚨 Alertas</b>\n\n" + "\n\n".join(a.message for a in fresh))
+
+    _, hot_alerts = service.speculative_clauses_report(world, s)
+    fresh_hot = [a for a in hot_alerts if store.alert_is_new(a.key)]
+    if fresh_hot:
+        notify.send_telegram(
+            s, "<b>📈 Cláusulas especulativas</b>\n\n" + "\n\n".join(a.message for a in fresh_hot)
+        )
 
     tx = service.my_transactions(api, world, store)
     if tx:
@@ -171,7 +181,7 @@ def _watch_once(store: Store, s) -> str:
         notify.send_report(s, service.report_sections(world, s, news, store))
         store.set("last_daily", today)
     return (
-        f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas · {len(tx)} movimientos"
+        f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas · {len(fresh_hot)} especulativas · {len(tx)} movimientos"
         f"{' · informe diario enviado' if daily_due else ''}"
         f"{' · estudio de mercado enviado' if market_due else ''}"
     )
@@ -234,6 +244,7 @@ def main(argv: list[str] | None = None) -> None:
         ("trends", "Tus jugadores: cuáles conviene vender ya"),
         ("rivals", "Resumen de rivales"),
         ("clauses", "Alarmas de cláusulas"),
+        ("clauses-hot", "Cláusulas especulativas: caras pero con racha fuerte sostenida"),
         ("lineup", "Once recomendado"),
         ("losses", "Jugadores tuyos por debajo de lo que pagaste"),
         ("market-news", "Nuevo en el mercado desde el último estudio, con veredicto"),

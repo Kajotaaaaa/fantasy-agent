@@ -53,6 +53,19 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   runner de GitHub Actions va en UTC) — nunca compares horas de juego con `datetime.now()` a
   secas.
 
+## Cláusulas especulativas (caras pero con racha fuerte y sostenida)
+`analysis.speculative_clause_candidates`/`speculative_clause_verdict`/`speculative_clause_alerts`
+(`service.speculative_clauses_report`, comando `clauses-hot`): cláusulas que NO pasan el filtro
+"lógico" (`ratio > max_ratio`, hasta un `ratio_ceiling` de 3.0 — pagar 3x mercado no lo salva
+ninguna racha) pero cuya subida de valor es fuerte (`d7 >= 15%`) Y sostenida (`not cooling`,
+para no repetir el error de recomendar una racha que ya se frenó). En vez de una única
+proyección a 14 días (poco fiable cuando el ritmo diario es alto: compone de forma irreal —
+ver el caso real de Yoel Lago, +73%/7d, que a ritmo plano de 7d proyectaría x4 en 14 días),
+se calculan dos escenarios con el ritmo de 3 días como base: optimista (se mantiene) y
+pesimista (se parte a la mitad cada 3 días), y se dice en qué día de cada uno recuperarías lo
+pagado. Van en un mensaje aparte, claramente marcados como alto riesgo — no se mezclan con las
+cláusulas "lógicas" de `clause_alerts`.
+
 ## Rentabilidad de cláusula: contra lo que pagas, no contra el valor de mercado
 `clause_verdict` proyecta el valor de mercado a 14 días (`project_value`) pero mide la
 ganancia contra `price` (lo que de verdad pagas por la cláusula), no contra el valor de

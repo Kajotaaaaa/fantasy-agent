@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html as _html
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -443,6 +444,140 @@ def clause_alerts(
     # Primero las que ya puedes pagar; entre iguales, mejor veredicto primero; luego, de más
     # cerca a más lejos de liberarse.
     alerts.sort(key=lambda a: (a.kind != "open_affordable", -a.stars, a.slot.clause_locked_until or now))
+    return alerts
+
+
+# ---------- cláusulas especulativas (rompen el filtro de precio, pero racha muy fuerte) -----
+@dataclass
+class SpeculativeAlert:
+    slot: SquadSlot
+    message: str
+
+    @property
+    def key(self) -> str:
+        return f"speculative:{self.slot.owner_team_id}:{self.slot.player.id}:{self.slot.clause}"
+
+
+def speculative_clause_candidates(
+    rival_slots: list[SquadSlot],
+    now: datetime,
+    min_quality_avg: float = 3.0,
+    max_ratio: float = 1.2,
+    ratio_ceiling: float = 3.0,
+) -> list[Player]:
+    """Rivales que NO pasan el filtro "lógico" (cláusula > `max_ratio` veces su valor de
+    mercado) pero podrían compensar igual si la subida de valor es lo bastante fuerte y
+    sostenida — para pedirles tendencia/noticias sin tener que hacerlo con cualquier cláusula
+    cara de la liga (`ratio_ceiling` acota lo disparatado: pagar 3x mercado no lo salva
+    ninguna racha)."""
+    seen: dict[str, Player] = {}
+    for slot in rival_slots:
+        p = slot.player
+        if p.position_id == 5 or not p.market_value or p.avg_points < min_quality_avg:
+            continue
+        ratio = slot.clause / p.market_value
+        if ratio <= max_ratio or ratio > ratio_ceiling:
+            continue
+        if not slot.clause_open(now):
+            continue
+        seen[p.id] = p
+    return list(seen.values())
+
+
+def _breakeven_days(current: int, target: int, daily_rate_pct: float, horizon: int = 14) -> int | None:
+    """Cuántos días (enteros, redondeando hacia arriba) tardaría `current` en alcanzar
+    `target` creciendo un `daily_rate_pct` cada día. None si el ritmo no es positivo o se
+    pasa del horizonte."""
+    if daily_rate_pct <= 0 or target <= current:
+        return None
+    days = math.log(target / current) / math.log(1 + daily_rate_pct / 100)
+    days = math.ceil(days)
+    return days if days <= horizon else None
+
+
+def speculative_clause_verdict(
+    p: Player,
+    price: int,
+    trend: Trend | None,
+    min_d7: float = 15.0,
+    horizon: int = 14,
+) -> list[str] | None:
+    """A diferencia de `clause_verdict`, aquí ya sabemos que el precio está por encima de lo
+    "lógico" — la pregunta no es "¿es una ganga?" sino "¿la racha es lo bastante fuerte y
+    sostenida como para que compense de todos modos?". En vez de una única proyección a 14
+    días (poco fiable cuando el ritmo diario es tan alto: compone de forma irreal), se calculan
+    dos escenarios de ritmo decreciente — optimista (mantiene el ritmo de los últimos 3 días)
+    y pesimista (ese ritmo se parte a la mitad cada 3 días) — y se cuenta en cuántos días de
+    cada uno recuperarías lo pagado. None si ni siquiera es una racha sostenida de verdad
+    (`trend.cooling`, o el 7 días no llega a `min_d7`): eso evita ofrecer como "especulativo
+    interesante" algo que ya se frenó, que es justo el error que no queremos repetir."""
+    if not trend or trend.cooling or trend.d7 < min_d7 or not p.market_value:
+        return None
+    current = p.market_value
+    if price <= current:
+        return None
+    d3_daily = ((1 + trend.d3 / 100) ** (1 / 3) - 1) * 100 if trend.d3 > 0 else 0.0
+
+    optimistic = _breakeven_days(current, price, d3_daily, horizon)
+
+    v, rate, pessimistic = float(current), d3_daily, None
+    for day in range(1, horizon + 1):
+        v *= (1 + rate / 100)
+        if v >= price and pessimistic is None:
+            pessimistic = day
+        if day % 3 == 0:
+            rate /= 2
+
+    reasons = [
+        f"Racha sostenida, no un pico de un día ({trend.d7:+.1f}% / 7d, {trend.d3:+.1f}% / 3d, {trend.d1:+.1f}% / 1d)",
+        f"Pagarías {_fmt_m(price)} por algo que vale {_fmt_m(current)} ahora mismo (x{price / current:.2f})",
+    ]
+    if optimistic:
+        reasons.append(f"Si mantiene el ritmo de los últimos 3 días: recuperas lo pagado en ~{optimistic} días")
+    else:
+        reasons.append(f"Ni manteniendo el ritmo actual llegarías a recuperarlo en {horizon} días")
+    if pessimistic:
+        reasons.append(f"Aunque la racha se frene rápido (a la mitad cada 3 días): lo recuperas sobre el día {pessimistic}")
+    else:
+        gap_pct = (v - price) / price * 100
+        reasons.append(f"Si se frena rápido, te quedarías corto: ~{_fmt_m(round(v))} de los {_fmt_m(price)} pagados ({gap_pct:+.0f}%)")
+    return reasons
+
+
+def speculative_clause_alerts(
+    rival_slots: list[SquadSlot],
+    my_cash: int | None,
+    now: datetime,
+    freeze: tuple[datetime, datetime] | None = None,
+    trends: dict[str, Trend] | None = None,
+    min_quality_avg: float = 3.0,
+    max_ratio: float = 1.2,
+    ratio_ceiling: float = 3.0,
+) -> list[SpeculativeAlert]:
+    """Cláusulas caras respecto a mercado pero con una racha fuerte y sostenida de verdad —
+    alto riesgo, no son una recomendación "segura" como las de `clause_alerts`, por eso van
+    aparte y etiquetadas como especulativas."""
+    frozen_now = bool(freeze and freeze[0] <= now < freeze[1])
+    trends = trends or {}
+    if frozen_now:
+        return []
+    alerts = []
+    for p in speculative_clause_candidates(rival_slots, now, min_quality_avg, max_ratio, ratio_ceiling):
+        slot = next(s for s in rival_slots if s.player.id == p.id)
+        if my_cash is not None and slot.clause > my_cash:
+            continue
+        reasons = speculative_clause_verdict(p, slot.clause, trends.get(p.id))
+        if reasons is None:
+            continue
+        motivos = "\n".join(f"• {esc(r)}" for r in reasons)
+        ratio = slot.clause / p.market_value
+        message = (
+            f"{b(p.name)}  <i>{esc(slot.owner_name)}</i>\n"
+            f"📈 Racha fuerte y sostenida — especulativo, alto riesgo\n"
+            f"Cláusula: {b(_fmt_m(slot.clause))} · mercado {_fmt_m(p.market_value)} (x{ratio:.2f})\n"
+            f"{motivos}"
+        )
+        alerts.append(SpeculativeAlert(slot, message))
     return alerts
 
 
