@@ -1007,6 +1007,18 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
     return "\n".join(lines)
 
 
+def flip_status_report(s: Settings, store) -> str:
+    """Una línea con el estado del flipeo autónomo, para que en el informe diario se vea si está
+    encendido y qué tiene entre manos (la ausencia de pujas por sí sola no dice nada)."""
+    mode = {"on": "activo", "shadow": "en sombra (solo cuenta lo que haría)"}.get(s.flip_mode)
+    if mode is None:
+        return f"🤖 {b('Flipeo')}: apagado — {i('la variable FLIP_MODE del repositorio no está en on')}"
+    pending = len(store.prefixed("flip_pending:")) if store is not None else 0
+    held = store.prefixed("flip_held:") if store is not None else {}
+    listed = sum(1 for v in held.values() if json.loads(v).get("listed"))
+    return f"🤖 {b('Flipeo')}: {mode} · {pending} pujas pendientes · {len(held)} jugadores en cartera ({listed} a la venta)"
+
+
 def report_sections(
     world: World, s: Settings, news: dict[str, dict] | None, store=None, rival_cash: dict[str, int] | None = None,
 ) -> list[tuple[str, dict | None]]:
@@ -1049,7 +1061,7 @@ def report_sections(
             sections.append((theft, None))
         sections.append((rivals_report(world, rival_cash), None))
 
-    sections.append((daily_advice_report(world, rival_cash), None))
+    sections.append((daily_advice_report(world, rival_cash) + "\n\n" + flip_status_report(s, store), None))
     return sections
 
 

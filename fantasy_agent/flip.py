@@ -164,6 +164,14 @@ def _buy(api: FantasyAPI, world: service.World, store, s: Settings, now: datetim
     cap = (world.my_cash + held_cost) * CAP_PCT
     committed = held_cost + sum(p["amount"] for p in pending.values())
     out = []
+    if not plan:
+        # Sin esto no se distingue "el bot no funciona" de "hoy no había nada que comprar".
+        tag = "🕶️ (sombra) " if shadow else ""
+        notify.send_telegram(
+            s, f"🤖 {tag}{b('Flipeo')}\nHoy no hay candidatos que cumplan las reglas: que suban hoy, no se enfríen, "
+               f"no cuesten más del 103% de su valor y quepan en el tope ({service.m(round(cap))}).",
+        )
+        return ["sin candidatos"]
     for item, amount, trend in plan:
         p = item.player
         detail = f"{b(p.name)} por {service.m(amount)}\n{i(analysis.trend_words(trend))}"
