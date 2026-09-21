@@ -479,6 +479,12 @@ def _watch_once(store: Store, s) -> str:
     except Exception as exc:
         print(f"[auditoría] error: {exc}")
 
+    try:
+        for note in flip.watch_offers(api, world, store, s):
+            print(f"[ofertas] {note}")
+    except Exception as exc:
+        print(f"[ofertas] error: {exc}")
+
     flip_note = ""
     try:
         if force_flip and s.flip_mode not in ("on", "shadow"):
@@ -533,7 +539,22 @@ def cmd_tick(args, s) -> None:
     """Una sola pasada de vigilancia (pensado para cron / GitHub Actions)."""
     if not notify.telegram_enabled(s):
         sys.exit("tick necesita Telegram configurado")
-    print(_watch_once(Store(s.db_file), s))
+    store = Store(s.db_file)
+    try:
+        print(_watch_once(store, s))
+    except Exception as exc:
+        # Sin esto un fallo (sesión caducada, API caída, un bug) solo se ve como un correo de
+        # "workflow fallido" de GitHub. Se avisa por Telegram, como máximo una vez cada 6 h por
+        # tipo de error para no inundarte con un fallo que se repite cada 30 minutos.
+        if store.alert_is_new(f"health:{type(exc).__name__}", ttl_hours=6):
+            hint = ""
+            if isinstance(exc, (RuntimeError, KeyError)) and "sesi" in str(exc).lower():
+                hint = "\nLa sesión de LaLiga parece caducada: repite el login (auth url / auth code)."
+            notify.send_telegram(
+                s, f"⚠️ {service.b('El vigilante ha fallado')}\n{service.esc(type(exc).__name__)}: "
+                   f"{service.esc(str(exc)[:300])}{hint}",
+            )
+        raise
 
 
 def cmd_watch(args, s) -> None:

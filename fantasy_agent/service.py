@@ -1049,7 +1049,18 @@ def flip_status_report(s: Settings, store) -> str:
     pending = len(store.prefixed("flip_pending:")) if store is not None else 0
     held = store.prefixed("flip_held:") if store is not None else {}
     listed = sum(1 for v in held.values() if json.loads(v).get("listed"))
-    return f"🤖 {b('Flipeo')}: {mode} · {pending} pujas pendientes · {len(held)} jugadores en cartera ({listed} a la venta)"
+    line = f"🤖 {b('Flipeo')}: {mode} · {pending} pujas pendientes · {len(held)} jugadores en cartera ({listed} a la venta)"
+    if store is not None:
+        baseline = store.get("flip_baseline") or ""
+        since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        week = [r for r in (json.loads(v) for v in store.prefixed("flip_result:").values()) if r["at"] > baseline and r["at"] >= since]
+        if week:
+            pnl = sum(r["profit"] for r in week)
+            summary = f"Últimos 7 días: {len(week)} cerrados, resultado {m(pnl)}"
+            line += f"\n{i(summary)}"
+        if store.get("flip_paused"):
+            line += f"\n⛔ {b('En pausa')}: {esc(store.get('flip_paused'))} — cambia FLIP_RESUME para reanudar"
+    return line
 
 
 def report_sections(

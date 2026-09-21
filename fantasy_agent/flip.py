@@ -10,12 +10,19 @@ Ciclo de un flip, con el estado en el `Store` (sobrevive entre vigilancias):
      ganado (el jugador aparece en tu plantilla -> `flip_held:<jugador>`) o se ha perdido.
   3. `_list_held` (cada vigilancia): pone a la venta lo ganado a valor de mercado.
   4. Aceptar ofertas: PENDIENTE. Nunca se ha visto una oferta real, y aceptar es irreversible;
-     ver CLAUDE.md antes de tocarlo. Mientras tanto las ofertas las decides tú.
+     ver CLAUDE.md antes de tocarlo. Mientras tanto `watch_offers` (solo lectura) te manda cada
+     oferta nueva con su JSON crudo y lo que diría la regla, y las decides tú.
+  5. Libro de resultados y freno (`flip_result:*`, `breaker_reason`): cada flip que sale de tu
+     plantilla se anota con lo que costó y lo que se cobró; si hay 3 seguidos en pérdida o
+     más de `FLIP_MAX_LOSS_M` (5M por defecto) perdidos en 14 días, el flipeo deja de COMPRAR
+     hasta que cambies el valor de la variable `FLIP_RESUME`.
 
 Solo se toca lo que el bot compró: nunca vende un jugador de tu once por su cuenta."""
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 from . import analysis, models, notify, service
@@ -29,6 +36,21 @@ MAX_NEW_PER_RUN = 3
 MAX_OVERPAY = 1.03  # nunca pujar más de un 3% por encima del valor de mercado
 LIST_RETRIES = 5
 EXPIRY_GRACE = timedelta(minutes=20)  # margen tras el cierre antes de dar una puja por perdida
+MAX_LOSS_DEFAULT_M = 5.0  # millones perdidos en 14 días a partir de los que se frena la compra
+LOSS_WINDOW = timedelta(days=14)
+STREAK = 3  # flips seguidos en pérdida que frenan la compra
+
+
+def breaker_reason(results: list[dict], now: datetime, max_loss: int) -> str | None:
+    """Por qué frenar la compra, o None. `results`: flips cerrados (`profit`, `at`) en orden
+    cronológico, ya sin los anteriores al último "reanudar". Se frena con `STREAK` seguidos en
+    pérdida o con más de `max_loss` perdido en los últimos 14 días."""
+    if len(results) >= STREAK and all(r["profit"] < 0 for r in results[-STREAK:]):
+        return f"{STREAK} flips seguidos en pérdida"
+    recent = sum(r["profit"] for r in results if now - datetime.fromisoformat(r["at"]) <= LOSS_WINDOW)
+    if recent < -max_loss:
+        return f"{service.m(-recent)} perdidos en 14 días (tope {service.m(max_loss)})"
+    return None
 
 
 def flip_amount(item: models.MarketItem, trend: analysis.Trend) -> int | None:
@@ -106,6 +128,38 @@ def _resolve_pending(world: service.World, store, s: Settings, now: datetime) ->
     return out
 
 
+def _closed_result(api: FantasyAPI, world: service.World, pid: str, h: dict, now: datetime) -> dict | None:
+    """Lo que se cobró por un flip que ya no está en tu plantilla: el último movimiento de
+    venta a LaLiga (tipo 33) o de cláusula cobrada (tipo 1, tú como vendedor) de ese jugador."""
+    my_id = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), None)
+    try:
+        events = models.parse_activity(api.activity(world.league_id, 0))
+    except Exception:
+        return None
+    exits = [
+        e for e in events
+        if e.player_id == pid and (
+            (e.type_id == models.ACTIVITY_SELL and e.user1_id == my_id)
+            or (e.type_id == models.ACTIVITY_CLAUSE and e.user2_id == my_id)
+        )
+    ]
+    if not exits:
+        return None
+    last = max(exits, key=lambda e: models.to_int(e.id))
+    return {
+        "name": h["name"], "buy": h["buy_price"], "sell": last.amount, "profit": last.amount - h["buy_price"],
+        "days": (now - datetime.fromisoformat(h["bought_at"])).days, "at": now.isoformat(),
+        "via": "te lo clausularon por" if last.type_id == models.ACTIVITY_CLAUSE else "vendido por",
+    }
+
+
+def _results(store) -> list[dict]:
+    """Flips cerrados desde el último "reanudar", en orden cronológico."""
+    baseline = store.get("flip_baseline") or ""
+    rows = [json.loads(v) for v in store.prefixed("flip_result:").values()]
+    return sorted((r for r in rows if r["at"] > baseline), key=lambda r: r["at"])
+
+
 def _list_held(api: FantasyAPI, world: service.World, store, s: Settings, now: datetime) -> list[str]:
     listed_now = {it.player.id for it in world.market}
     today = now.strftime("%Y-%m-%d")
@@ -114,10 +168,21 @@ def _list_held(api: FantasyAPI, world: service.World, store, s: Settings, now: d
         slot = next((sl for sl in world.my_slots if sl.player.id == pid), None)
         if slot is None:
             store.set(f"flip_held:{pid}", "")
-            notify.send_telegram(
-                s, f"🤖 {b('Flip cerrado')}\n{b(h['name'])} ya no está en tu plantilla (venta o cláusula); "
-                   f"mira los movimientos para el resultado.",
-            )
+            result = _closed_result(api, world, pid, h, now)
+            if result:
+                store.set(f"flip_result:{now.isoformat()}:{pid}", json.dumps(result))
+                pct = result["profit"] / result["buy"] * 100 if result["buy"] else 0
+                msg = (
+                    f"🤖 {b('Flip cerrado')}\n{b(h['name'])}: comprado {service.m(result['buy'])}, "
+                    f"{result['via']} {service.m(result['sell'])} en {result['days']} días\n"
+                    f"{b('Resultado: ' + service.m(result['profit']))} ({pct:+.1f}%)"
+                )
+            else:
+                msg = (
+                    f"🤖 {b('Flip cerrado')}\n{b(h['name'])} ya no está en tu plantilla; no encuentro el "
+                    f"movimiento en el historial reciente para calcular el resultado."
+                )
+            notify.send_telegram(s, msg)
             out.append(f"cerrado {h['name']}")
             continue
         if h["listed"]:
@@ -219,7 +284,80 @@ def run(
     if s.flip_mode == "on":
         notes += _resolve_pending(world, store, s, now)
         notes += _list_held(api, world, store, s, now)
+        notes += _apply_breaker(store, s, now)
     if buy_now and (force or store.get("flip_last_buy") != today):
-        notes += _buy(api, world, store, s, now)
+        if store.get("flip_paused"):
+            notes.append("compra en pausa")
+        else:
+            notes += _buy(api, world, store, s, now)
         store.set("flip_last_buy", today)
     return " · ".join(notes)
+
+
+def _apply_breaker(store, s: Settings, now: datetime) -> list[str]:
+    """Frena la compra si los resultados lo piden, y la reanuda cuando cambias `FLIP_RESUME`
+    (el valor visto antes de frenar no cuenta: hace falta un valor NUEVO)."""
+    token = os.environ.get("FLIP_RESUME") or ""
+    paused = store.get("flip_paused")
+    if paused:
+        if token and token != store.get("flip_resume_seen"):
+            store.set("flip_paused", "")
+            store.set("flip_baseline", now.isoformat())
+            store.set("flip_resume_seen", token)
+            notify.send_telegram(s, f"🤖 {b('Flipeo reanudado')}\nEmpiezo la cuenta de resultados desde cero.")
+            return ["reanudado"]
+        return []
+    if token:
+        store.set("flip_resume_seen", token)
+    max_loss = round(float(os.environ.get("FLIP_MAX_LOSS_M") or MAX_LOSS_DEFAULT_M) * 1_000_000)
+    reason = breaker_reason(_results(store), now, max_loss)
+    if not reason:
+        return []
+    store.set("flip_paused", reason)
+    notify.send_telegram(
+        s, f"⛔ {b('Flipeo en pausa')}\n{esc(reason)}. No compro nada más hasta que lo reanudes: cambia el valor "
+           f"de la variable FLIP_RESUME en GitHub (cualquier texto distinto al anterior). Lo que ya tengo "
+           f"comprado sigue su curso.",
+    )
+    return [f"pausa: {reason}"]
+
+
+def watch_offers(api: FantasyAPI, world: service.World, store, s: Settings) -> list[str]:
+    """SOLO LECTURA: cada oferta nueva de la liga por un jugador tuyo puesto a la venta se manda
+    por Telegram con su JSON crudo (para ver por fin el formato real) y, si se reconoce el
+    importe y es un flip, lo que diría `analysis.flip_decision`. No acepta ni rechaza nada."""
+    listed = {it.player.id for it in service._my_listings(world)}
+    held = _load(store, "flip_held:")
+    out = []
+    for slot in world.my_slots:
+        if slot.player.id not in listed or not slot.player_team_id:
+            continue
+        try:
+            payload = api.player_offers(world.league_id, slot.player_team_id)
+        except Exception as exc:
+            print(f"[ofertas] {slot.player.name}: {exc}")
+            continue
+        offers = models.as_list(payload, "offers", "elements", "items")
+        if not offers and isinstance(payload, dict) and payload and not any(isinstance(v, list) for v in payload.values()):
+            offers = [payload]
+        for offer in offers:
+            raw = json.dumps(offer, ensure_ascii=False, sort_keys=True)
+            key = "offer_seen:" + hashlib.sha1(raw.encode()).hexdigest()[:16]
+            if store.get(key):
+                continue
+            store.set(key, "1")
+            amount = models.to_int(models.pick(offer, "money", "offerMoney", "amount", "price", "salePrice", default=0))
+            lines = [f"📨 {b('Oferta recibida')} por {b(slot.player.name)}"]
+            if amount:
+                lines.append(f"Importe: {b(service.m(amount))}")
+                buy = int(store.get(f"buy_price:{slot.player.id}") or 0)
+                if buy:
+                    held_at = held.get(slot.player.id, {}).get("bought_at")
+                    days = (datetime.now(timezone.utc) - datetime.fromisoformat(held_at)).days if held_at else 0
+                    decision, why = analysis.flip_decision(buy, amount, days, None)
+                    verb = "aceptar" if decision == "accept" else "esperar"
+                    lines.append(f"Mi regla: {b(verb)} — {esc(why)} (lo pagaste {service.m(buy)})")
+            lines.append(f"<code>{esc(raw[:600])}</code>")
+            notify.send_telegram(s, "\n".join(lines))
+            out.append(f"oferta {slot.player.name}")
+    return out

@@ -52,6 +52,10 @@ jobs:
           # Interruptor del flipeo autónomo: variable del repositorio (Settings > Secrets and
           # variables > Actions > Variables). "on" ejecuta, "shadow" solo cuenta, vacío = apagado.
           FLIP_MODE: ${{ vars.FLIP_MODE }}
+          # Freno del flipeo: cambiar el valor de FLIP_RESUME reanuda la compra tras una pausa;
+          # FLIP_MAX_LOSS_M = millones perdidos en 14 días que la activan (5 por defecto).
+          FLIP_RESUME: ${{ vars.FLIP_RESUME }}
+          FLIP_MAX_LOSS_M: ${{ vars.FLIP_MAX_LOSS_M }}
           FLIP_FORCE_BUY: ${{ inputs.force_flip_buy && '1' || '' }}
 
       - name: Guardar estado actualizado

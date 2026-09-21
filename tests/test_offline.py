@@ -161,6 +161,42 @@ class Tests(unittest.TestCase):
         # El flipeo no toca un anuncio donde ya hay una puja tuya.
         self.assertEqual(flip.plan_bids([(item, analysis.Trend(2.0, 4.0, 8.0))], 100_000_000, 0, [], set(), 0), [])
 
+    def test_flip_breaker_and_offers_watch(self):
+        from fantasy_agent import flip
+
+        now = NOW
+        at = lambda days: (now - timedelta(days=days)).isoformat()  # noqa: E731
+        loss = lambda p, d: {"profit": p, "at": at(d)}  # noqa: E731
+        m5 = 5_000_000
+        self.assertIsNone(flip.breaker_reason([], now, m5))
+        self.assertIn("3 flips seguidos", flip.breaker_reason([loss(-1, 3), loss(-1, 2), loss(-1, 1)], now, m5))
+        # Una ganancia en medio corta la racha; la pérdida acumulada (-3.5M) queda por debajo del tope.
+        self.assertIsNone(flip.breaker_reason([loss(-1_000_000, 3), loss(+500_000, 2), loss(-3_000_000, 1)], now, m5))
+        # Pérdida acumulada por encima del tope en 14 días -> frena; fuera de la ventana no cuenta.
+        self.assertIn("perdidos en 14 días", flip.breaker_reason([loss(-6_000_000, 5), loss(+100, 1)], now, m5))
+        self.assertIsNone(flip.breaker_reason([loss(-6_000_000, 20), loss(+100, 1)], now, m5))
+
+        class OfferAPI(FakeAPI):
+            def player_offers(self, lid, player_team_id):
+                return [{"id": "O1", "money": 8_500_000}] if player_team_id == "pt-me3" else []
+
+        sent = []
+        original = flip.notify.send_telegram
+        flip.notify.send_telegram = lambda settings, text, buttons=None: sent.append(text)
+        try:
+            world = service.build_world(OfferAPI(), self.s)
+            store = Store(Path(tempfile.mkdtemp()) / "o.sqlite3")
+            store.set("buy_price:me3", "8000000")
+            self.assertEqual(flip.watch_offers(OfferAPI(), world, store, self.s), ["oferta me-J3"])
+            self.assertEqual(flip.watch_offers(OfferAPI(), world, store, self.s), [])  # ya vista: no se repite
+        finally:
+            flip.notify.send_telegram = original
+        self.assertEqual(len(sent), 1)
+        self.assertIn("Oferta recibida", sent[0])
+        self.assertIn("8.50M", sent[0])
+        self.assertIn("aceptar", sent[0])  # beneficio sobre lo pagado (8.0M -> 8.5M)
+        self.assertIn("O1", sent[0])  # el JSON crudo va incluido
+
     def test_snipe_plan(self):
         from fantasy_agent import snipe
 

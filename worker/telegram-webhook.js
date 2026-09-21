@@ -43,11 +43,43 @@ const dispatch = (env, event_type, client_payload) =>
     body: JSON.stringify({ event_type, client_payload }),
   });
 
+// Vigilante de la vigilancia: el `tick` corre cada 30 min en GitHub Actions y, si deja de correr
+// (cron desactivado por inactividad, token de GitHub roto, sesión caducada en bucle...), nadie
+// se entera. Cada hora se mira la última ejecución CORRECTA de watch.yml y se avisa por Telegram
+// en la primera hora a partir de las 2 h de silencio, y otra vez a partir de las 24 h.
+async function healthCheck(env) {
+  const res = await fetch(
+    `https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/watch.yml/runs?status=success&per_page=1`,
+    {
+      headers: {
+        authorization: `Bearer ${env.GITHUB_TOKEN}`,
+        accept: "application/vnd.github+json",
+        "user-agent": "fantasy-agent-worker",
+        "x-github-api-version": "2022-11-28",
+      },
+    },
+  );
+  if (!res.ok) return; // sin datos no se alarma (podría ser un fallo momentáneo de GitHub)
+  const last = (await res.json()).workflow_runs?.[0];
+  const ageMin = last ? (Date.now() - Date.parse(last.updated_at)) / 60000 : Infinity;
+  const first = ageMin >= 120 && ageMin < 180;
+  const daily = ageMin >= 1440 && ageMin < 1500;
+  if (first || daily) {
+    const hours = Number.isFinite(ageMin) ? `${Math.round(ageMin / 60)} h` : "mucho tiempo";
+    await tg(env, "sendMessage", {
+      chat_id: env.TELEGRAM_CHAT_ID,
+      text: `⚠️ El vigilante lleva ${hours} sin ejecutarse con éxito. Mira la pestaña Actions del repositorio (fantasy-watch).`,
+    });
+  }
+}
+
 export default {
-  // Cron (wrangler.toml): a las 20:50 hora de España lanza la rebaja de último segundo
-  // (workflow snipe.yml). El cron de GitHub se retrasa minutos; el de Cloudflare es puntual.
+  // Crons (wrangler.toml): a las 20:50 hora de España lanza la rebaja de último segundo
+  // (workflow snipe.yml; el cron de GitHub se retrasa minutos, el de Cloudflare es puntual) y
+  // cada hora comprueba que el vigilante sigue vivo.
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(dispatch(env, "fantasy-snipe", {}));
+    if (event.cron === "13 * * * *") ctx.waitUntil(healthCheck(env));
+    else ctx.waitUntil(dispatch(env, "fantasy-snipe", {}));
   },
 
   async fetch(request, env) {

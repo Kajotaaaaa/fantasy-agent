@@ -69,9 +69,24 @@ estado real vive en la caché de Actions, no en el SQLite local; no ejecutar `wa
   pujaste a mano).
 - **PENDIENTE (bloqueante): aceptar/rechazar ofertas.** Nunca se ha visto una oferta real
   (`player_offers`/`accept_offer` sin verificar). Hasta verificarlo con la primera oferta real
-  (Iván Azón, ciclo de las 21:00) el bot NO acepta nada: las ofertas las decides tú. Al
-  implementarlo usar `analysis.flip_decision` + `squad_can_field_eleven` (reglas del usuario más
-  abajo) y verificar el formato antes de activar la aceptación automática.
+  el bot NO acepta nada: las ofertas las decides tú. `flip.watch_offers` (SOLO LECTURA, en cada
+  tick, con o sin FLIP_MODE) manda por Telegram cada oferta nueva de un jugador tuyo en venta
+  con su JSON crudo (`<code>`) y lo que diría `analysis.flip_decision`: así el formato real
+  llega solo, sin tener que pedir nada. Al implementar la aceptación usar `flip_decision` +
+  `squad_can_field_eleven` (reglas del usuario más abajo) y verificar el formato antes.
+- **Libro de resultados y freno.** Cuando un flip sale de tu plantilla (`_list_held`), se anota
+  en `flip_result:*` lo que costó y lo que se cobró (venta a LaLiga tipo 33 o cláusula cobrada
+  tipo 1 del historial) y se manda "Flip cerrado" con el resultado. `breaker_reason` PAUSA LA
+  COMPRA (`flip_paused`; lo ya comprado sigue su curso) con 3 flips seguidos en pérdida o más
+  de `FLIP_MAX_LOSS_M` (5M por defecto) perdidos en 14 días. Se reanuda cambiando el valor de la
+  variable de repositorio `FLIP_RESUME` a un texto NUEVO (el valor visto antes de la pausa no
+  vale; la cuenta de resultados vuelve a cero — `flip_baseline`). El informe diario lo enseña
+  ("Últimos 7 días: N cerrados, resultado X" y "⛔ En pausa").
+- **Avisos de salud.** `cmd_tick` manda "⚠️ El vigilante ha fallado" por Telegram (una vez cada
+  6 h por tipo de error) además de fallar el workflow. Y el Worker de Cloudflare (cron
+  `13 * * * *`, `healthCheck`) mira cada hora la última ejecución correcta de `watch.yml` y
+  avisa a las 2 h de silencio y a las 24 h: cubre lo que un tick que ni arranca no puede
+  contar (cron de GitHub desactivado por inactividad, token de GitHub roto...).
 
 ## Techo de puja (fichajes para el once, no flipeo)
 `analysis.bid_ceiling` + `service.position_ppm_benchmark`/`bid_ceiling_report` (comando
