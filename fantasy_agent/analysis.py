@@ -1,10 +1,25 @@
 """Análisis puro (sin red): tendencias, oportunidades de mercado y alarmas de cláusula."""
 from __future__ import annotations
 
+import html as _html
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from .models import MarketItem, Player, SquadSlot
+
+
+def esc(text) -> str:
+    """Escapa para Telegram HTML (solo & < > cuentan); todo texto que venga de la API o de
+    scraping pasa por aquí antes de insertarse en un mensaje con `parse_mode=HTML`."""
+    return _html.escape(str(text), quote=False)
+
+
+def b(text) -> str:
+    return f"<b>{esc(text)}</b>"
+
+
+def i(text) -> str:
+    return f"<i>{esc(text)}</i>"
 
 
 # ---------- tendencias de valor ---------------------------------------------
@@ -371,15 +386,14 @@ def clause_alerts(
 
         stars, label, reasons = clause_verdict(p, ratio, trends.get(p.id), news.get(p.id))
         stars_str = "★" * stars + "☆" * (4 - stars)
-        motivos = "\n".join(f"- {r}" for r in reasons)
+        motivos = "\n".join(f"• {esc(r)}" for r in reasons)
         alerts.append(ClauseAlert(
             "open_affordable" if slot.clause_open(now) else "unlock_soon", slot,
-            f"{p.name}\n"
-            f"Dueño: {slot.owner_name}\n"
+            f"{b(p.name)}  <i>{esc(slot.owner_name)}</i>\n"
             f"{stars_str} {label}\n"
-            f"Cláusula: {_fmt_m(slot.clause)} (mercado: {_fmt_m(p.market_value)}, x{ratio:.2f})\n"
-            f"Estado: {estado}\n"
-            f"Por qué:\n{motivos}",
+            f"Cláusula: {b(_fmt_m(slot.clause))} · mercado {_fmt_m(p.market_value)} (x{ratio:.2f})\n"
+            f"{i('Estado: ' + estado)}\n"
+            f"{motivos}",
             tier=tier,
             stars=stars,
         ))

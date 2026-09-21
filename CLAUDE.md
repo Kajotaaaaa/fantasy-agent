@@ -53,6 +53,14 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   runner de GitHub Actions va en UTC) — nunca compares horas de juego con `datetime.now()` a
   secas.
 
+## Formato de los mensajes
+Los informes se mandan a Telegram con `parse_mode=HTML` (`notify.send_telegram`). Helpers en
+`analysis.py` (`b`, `i`, `esc`) para negrita/cursiva/escapado — reexportados desde `service.py`.
+Cualquier texto que venga de la API o de scraping (nombres de jugador, mánager, notas) pasa por
+`esc()`/`b()`/`i()` antes de insertarse: sin esto, un `&`/`<`/`>` suelto rompe el mensaje entero
+en Telegram. `notify.send_telegram` trocea por bloques completos (líneas en blanco), nunca a
+medio bloque, para no cortar una etiqueta HTML por la mitad.
+
 ## Mapa
 - `auth.py`     login Azure B2C (PKCE) y refresh de tokens
 - `api.py`      rutas de la API (GET únicamente)

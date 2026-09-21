@@ -95,7 +95,7 @@ class Tests(unittest.TestCase):
         self.assertIn("se libera", report)            # Pepe: bloqueadas 5h
         self.assertIn("pagable ya", report)           # Lola: cláusula barata abierta
         self.assertNotIn("(tuyo)", report)            # ya no avisamos de riesgo en jugadores propios
-        self.assertIn("ONCE RECOMENDADO", report)
+        self.assertIn("Once recomendado", report)
 
     def test_market_ranking(self):
         world = service.build_world(FakeAPI(), self.s)

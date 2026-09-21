@@ -150,11 +150,11 @@ def _watch_once(store: Store, s) -> str:
     _, alerts = service.clauses_report(world, s, clause_news)
     fresh = [a for a in alerts if store.alert_is_new(a.key)]
     if fresh:
-        notify.send_telegram(s, "🚨 ALERTAS\n" + "\n".join(a.message for a in fresh))
+        notify.send_telegram(s, "<b>🚨 Alertas</b>\n\n" + "\n\n".join(a.message for a in fresh))
 
     tx = service.my_transactions(api, world, store)
     if tx:
-        notify.send_telegram(s, "📒 MOVIMIENTOS EN TU EQUIPO\n\n" + "\n\n".join(tx))
+        notify.send_telegram(s, "<b>📒 Movimientos en tu equipo</b>\n\n" + "\n\n".join(tx))
 
     if market_due:
         arrivals = service.market_arrivals_report(world, store)
@@ -183,7 +183,7 @@ def cmd_movements(args, s) -> None:
     world = _world(api, s, trends=False)
     store = Store(s.db_file)
     tx = service.my_transactions(api, world, store)
-    text = "📒 MOVIMIENTOS EN TU EQUIPO\n\n" + "\n\n".join(tx) if tx else "Sin movimientos nuevos."
+    text = "<b>📒 Movimientos en tu equipo</b>\n\n" + "\n\n".join(tx) if tx else "Sin movimientos nuevos."
     _out(s, text, args.telegram)
 
 
