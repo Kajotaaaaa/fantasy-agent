@@ -207,6 +207,59 @@ def _my_avg_by_position(world: World) -> dict[int, float]:
     return {pos: sum(vals) / len(vals) for pos, vals in by_pos.items() if vals}
 
 
+def position_ppm_benchmark(world: World, position_id: int, exclude_id: str | None = None) -> float:
+    """Mediana de puntos-por-millón entre los anuncios pujables de LaLiga en esa posición
+    ahora mismo: la "tarifa" vigente de mercado por punto, referencia para el techo de puja
+    (`analysis.bid_ceiling`)."""
+    ppms = []
+    for item in _biddable(world):
+        if item.player.position_id != position_id or item.player.id == exclude_id:
+            continue
+        if not item.player.avg_points or item.price <= 0:
+            continue
+        ppms.append(item.player.avg_points / (item.price / 1_000_000))
+    if not ppms:
+        return 0.0
+    ppms.sort()
+    mid = len(ppms) // 2
+    return ppms[mid] if len(ppms) % 2 else (ppms[mid - 1] + ppms[mid]) / 2
+
+
+def bid_ceiling_report(world: World, player: models.Player) -> str:
+    benchmark = position_ppm_benchmark(world, player.position_id, exclude_id=player.id)
+    is_top = player.id in world.league_top_ids
+    ceiling = analysis.bid_ceiling(player.avg_points, benchmark, is_top)
+    lines = [
+        f"{b(player.name)}  <i>{player.position} · {esc(player.team)}</i>",
+        f"Media: {player.avg_points:.1f} pts/partido",
+    ]
+    if benchmark:
+        lines.append(f"Tarifa de mercado en su posición: {benchmark:.2f} pts/M")
+    else:
+        lines.append(i("Sin referencia de mercado en su posición ahora mismo — techo poco fiable"))
+    if is_top:
+        lines.append("🌟 TOP de liga — prima de escasez aplicada (+30%)")
+    if ceiling:
+        lines.append(f"{b('Techo de puja: ' + m(ceiling))}")
+        lines.append(i("Por encima de esto, aunque ganes la puja ciega, habría sido mejor negocio la alternativa del mercado."))
+    else:
+        lines.append(i("No hay datos suficientes para calcular un techo fiable ahora mismo."))
+    return "\n".join(lines)
+
+
+def find_player(api: FantasyAPI, world: World, player_id: str) -> models.Player | None:
+    for sl in (*world.my_slots, *world.rival_slots):
+        if sl.player.id == player_id:
+            return sl.player
+    for item in world.market:
+        if item.player.id == player_id:
+            return item.player
+    try:
+        return models.parse_player(api.player(player_id))
+    except Exception:
+        return None
+
+
 def _upgrade_reason(p: models.Player, my_avg_by_position: dict[int, float]) -> str:
     """Motivo pensado hacia delante: lo que ya puntuó no te lo llevas tú, importa su media
     de puntos por partido comparada con lo que ya tienes en esa posición."""

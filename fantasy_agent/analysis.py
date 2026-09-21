@@ -117,6 +117,25 @@ def score_market_item(item: MarketItem, trend: Trend, my_cash: int | None) -> Op
     return Opportunity(item, trend, round(score, 1), reasons)
 
 
+def bid_ceiling(avg_points: float, alternative_ppm: float, is_top: bool) -> int:
+    """Techo de puja para un jugador que quieres para TU ONCE (puntos, no reventa): el precio
+    máximo a partir del cual, aunque ganes la puja ciega, te habría salido mejor gastar ese
+    dinero en la mejor alternativa realista disponible ahora mismo (`alternative_ppm`: puntos
+    por millón de esa alternativa — normalmente la mediana del mercado en su posición). Pasado
+    ese precio, estás pagando más por punto que lo que cuesta un punto ahora mismo en el
+    mercado. Los TOP de liga (solo 3 por posición en TODA LaLiga) llevan una prima del 30%:
+    no son "buenos", son escasos e insustituibles, y eso vale dinero aparte de sus puntos.
+    Como las pujas son ciegas (no se ve lo que oferta nadie más — confirmado en el FAQ oficial
+    del juego), este techo es tu única defensa real contra pagar de más: o pujas hasta aquí
+    sabiendo que sigue siendo buen negocio, o no merece la pena arriesgar más."""
+    if alternative_ppm <= 0 or avg_points <= 0:
+        return 0
+    ceiling = avg_points / alternative_ppm * 1_000_000
+    if is_top:
+        ceiling *= 1.3
+    return round(ceiling)
+
+
 def market_verdict(
     item: MarketItem,
     trend: Trend,

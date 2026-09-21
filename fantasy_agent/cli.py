@@ -144,6 +144,17 @@ def cmd_clause(args, s) -> None:
     print(json.dumps(result, indent=2, ensure_ascii=False)[:2000])
 
 
+def cmd_ceiling(args, s) -> None:
+    """Lectura pura: techo de puja recomendado para un jugador (para tu once, no flipeo)."""
+    api = FantasyAPI(s)
+    world = service.build_world(api, s, with_trends=False)
+    player = service.find_player(api, world, args.player_id)
+    if not player:
+        sys.exit(f"No encuentro a ningún jugador con id {args.player_id}.")
+    text = service.bid_ceiling_report(world, player)
+    _out(s, text, args.telegram)
+
+
 def cmd_offers(args, s) -> None:
     """Lectura pura: ofertas pendientes sobre un jugador tuyo (solo si lo has puesto a la
     venta). Sin riesgo, no gasta nada — para ver la forma real de una oferta por primera vez."""
@@ -391,6 +402,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("amount", nargs="?", type=int, default=None, help="cantidad a pagar (por defecto, la cláusula actual)")
     p.add_argument("--confirm", action="store_true", help="ejecuta de verdad; sin esto solo es vista previa")
     p.set_defaults(func=cmd_clause)
+
+    p = sub.add_parser("ceiling", help="Techo de puja recomendado para un jugador (para tu once, no flipeo)")
+    p.add_argument("player_id", help="id del jugador")
+    p.add_argument("--telegram", action="store_true", help="enviar también por Telegram")
+    p.set_defaults(func=cmd_ceiling)
 
     p = sub.add_parser("offers", help="Lectura: ofertas pendientes sobre un jugador tuyo puesto a la venta")
     p.add_argument("player_id", help="id del jugador (el tuyo)")

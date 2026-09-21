@@ -9,6 +9,17 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   todas siguen el patrón vista-previa-por-defecto + `--confirm` para ejecutar de verdad, y
   nunca se deben disparar automáticamente sin que el usuario apruebe esa operación concreta.
 
+## Techo de puja (fichajes para el once, no flipeo)
+`analysis.bid_ceiling` + `service.position_ppm_benchmark`/`bid_ceiling_report` (comando
+`ceiling <player_id>`): las pujas son ciegas por diseño del juego (confirmado en el FAQ
+oficial: no se puede ver lo que puja nadie), así que "pujar un poco más que el rival" no
+existe como estrategia — la única defensa real es un techo basado en valor, no en adivinar a
+la competencia. Techo = puntos de media del jugador ÷ mediana de puntos-por-millón del
+mercado pujable en su posición ahora mismo (la "tarifa" vigente); +30% si es TOP de liga
+(`league_top_ids` — top 3 de TODA LaLiga por puntos totales en su posición, no solo de tu
+liga privada: son escasos e insustituibles, vale la pena pagar de más). Por encima del techo,
+aunque ganes la puja, te habría salido mejor la alternativa del mercado.
+
 ## Flipeo (comprar en subida, revender rápido) — reglas exactas del usuario
 `analysis.flip_decision`: con beneficio, aceptar siempre (no ser codicioso con márgenes
 pequeños). Sin beneficio y con menos de 3 días desde la compra, esperar SI la tendencia
