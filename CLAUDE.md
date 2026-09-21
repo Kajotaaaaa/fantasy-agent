@@ -456,6 +456,14 @@ botón "b:<id>" → Worker cambia SU fila a [✅ Confirmar · <etiqueta> "B:<id>
   GITHUB_TOKEN (PAT con permiso sobre el repo), GITHUB_REPO ("owner/repo"); luego
   `python -m fantasy_agent set-webhook <url-del-worker> <mismo-secreto>`.
 
+## Horas en los mensajes: siempre `analysis.to_madrid`
+El informe y los trabajos se generan en GitHub Actions, donde la zona de la máquina es UTC: un
+`.astimezone()` a secas enseña la hora con 2 h de menos (el simulacro de la compra armada dijo
+"la pagaré a las 16:06:41" cuando eran las 18:06, y de paso el sello del informe diario, "Empieza
+la jornada" y "Cláusulas congeladas hasta..." salían igual de desplazados). TODA hora que se
+muestre pasa por `analysis.to_madrid(dt)` (regla de la UE a mano, sin `tzdata`); `cli._madrid_now`
+la reutiliza. No usar `.astimezone()` sin argumento ni `strftime` sobre un datetime sin convertir.
+
 ## Formato de los mensajes
 Los informes se mandan a Telegram con `parse_mode=HTML` (`notify.send_telegram`). Helpers en
 `analysis.py` (`b`, `i`, `esc`) para negrita/cursiva/escapado — reexportados desde `service.py`.

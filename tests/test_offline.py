@@ -382,6 +382,20 @@ class Tests(unittest.TestCase):
         simple = analysis.estimate_cash(events, "A", 50_000_000, teams)
         self.assertEqual(simple["TB"], 43_000_000)
 
+    def test_to_madrid(self):
+        utc = timezone.utc
+        # Verano (CEST, +2): las 16:06:41 UTC son las 18:06:41 en España — la hora del "simulacro" que
+        # salió con 2 h de menos porque el runner de GitHub Actions va en UTC.
+        summer = analysis.to_madrid(datetime(2026, 9, 21, 16, 6, 41, tzinfo=utc))
+        self.assertEqual(summer.strftime("%H:%M:%S"), "18:06:41")
+        # Invierno (CET, +1) y el cambio de hora: último domingo de octubre a la 01:00 UTC (25/10/2026).
+        self.assertEqual(analysis.to_madrid(datetime(2026, 12, 1, 10, 0, tzinfo=utc)).strftime("%H:%M"), "11:00")
+        self.assertEqual(analysis.to_madrid(datetime(2026, 10, 25, 0, 30, tzinfo=utc)).strftime("%H:%M"), "02:30")
+        self.assertEqual(analysis.to_madrid(datetime(2026, 10, 25, 1, 30, tzinfo=utc)).strftime("%H:%M"), "02:30")
+        # Un datetime con otra zona (la +02:00 de la API) da la misma hora de España.
+        api_time = datetime(2026, 9, 21, 21, 0, tzinfo=timezone(timedelta(hours=2)))
+        self.assertEqual(analysis.to_madrid(api_time).strftime("%H:%M"), "21:00")
+
     def test_can_bid(self):
         m40 = analysis.CASH_UNCERTAINTY
         self.assertEqual(analysis.can_bid(15_000_000, 15_000_000 + m40), "yes")

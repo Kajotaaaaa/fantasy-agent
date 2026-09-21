@@ -26,7 +26,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from . import models, notify, service
+from . import analysis, models, notify, service
 from .analysis import b, esc, i
 from .api import FantasyAPI
 from .config import Settings
@@ -85,7 +85,7 @@ def reminder_message(
     hours, minutes = int(left.total_seconds() // 3600), int(left.total_seconds() % 3600 // 60)
     text = (
         f"⏰ {b(p.name)} de {esc(slot.owner_name)}: se le acaba el bloqueo de la cláusula a las "
-        f"{b(when.strftime('%H:%M:%S'))} (en {hours} h {minutes:02d} min).\n"
+        f"{b(analysis.to_madrid(when).strftime('%H:%M:%S'))} (en {hours} h {minutes:02d} min).\n"
         f"Cláusula ahora: {b(service.m(slot.clause))}{ratio}{_reach(cash, slot.clause)}\n"
         f"{i(f'¿La dejas comprada ya por EXACTAMENTE {service.m(slot.clause)}? La pago en el segundo del desbloqueo. Si el dueño cambia el importe antes, no pago: te aviso y te vuelvo a preguntar.')}"
     )
@@ -179,9 +179,7 @@ def simulate(api: FantasyAPI, s: Settings) -> None:
     world = service.build_world(api, s, with_trends=False)
     base = next(sl for sl in world.rival_slots if sl.player.position_id != 5)
     now = datetime.now(timezone.utc)
-    tz = base.clause_locked_until.tzinfo if base.clause_locked_until else timezone(timedelta(hours=2))
-    today = now.astimezone(tz)
-    unlock = today.replace(hour=21, minute=0, second=0, microsecond=0)
+    unlock = analysis.to_madrid(now).replace(hour=21, minute=0, second=0, microsecond=0)
     if unlock <= now:
         unlock += timedelta(days=1)
     fake = replace(
@@ -244,11 +242,11 @@ def run(
     if fire_at is not None and fire_at - now() > MAX_ARM:
         notify.send_telegram(
             s, f"❌ {b('No armo la compra')}\nFalta demasiado para el desbloqueo de {b(name)} "
-               f"({fire_at.strftime('%d/%m %H:%M:%S')}): un trabajo de GitHub solo aguanta ~6 h. Arma más cerca.",
+               f"({analysis.to_madrid(fire_at).strftime('%d/%m %H:%M:%S')}): un trabajo de GitHub solo aguanta ~6 h. Arma más cerca.",
         )
         return
 
-    when = f"a las {fire_at.strftime('%H:%M:%S')} (hora de la liga)" if fire_at else "ya"
+    when = f"a las {analysis.to_madrid(fire_at).strftime('%H:%M:%S')} (hora de España)" if fire_at else "ya"
     notify.send_telegram(
         s, f"🎯 {tag}{b('Compra armada')}\n{b(name)} de {esc(owner)}: la pagaré {when} por exactamente "
            f"{b(service.m(amount))}.\n{i('Si el dueño cambia el importe antes, cancelo y te vuelvo a preguntar.')}",

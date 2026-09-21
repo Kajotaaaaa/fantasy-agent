@@ -22,7 +22,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
-from . import models, notify, service
+from . import analysis, models, notify, service
 from .analysis import b, esc, i
 from .api import BASE, COMP, FantasyAPI
 from .config import Settings
@@ -144,8 +144,7 @@ def run(api: FantasyAPI, s: Settings, mode: str, close_in: float | None = None) 
                     done.append(f"🕶️ Habría bajado {it.player.name}: {service.m(it.my_bid)} → {service.m(amount)} (nadie más pujaba)")
 
     tag = "real" if live else "sombra"
-    # `close` hereda la zona del expirationDate (+02:00 hora de España); en pruebas va en UTC.
-    head = f"🎯 {b('Rebaja de último segundo')} ({tag}) · cierre {close.strftime('%H:%M:%S')}"
+    head = f"🎯 {b('Rebaja de último segundo')} ({tag}) · cierre {analysis.to_madrid(close).strftime('%H:%M:%S')}"
     body = done or [i("Nada que bajar: ninguna puja tuya estaba sola por encima del mínimo.")]
     return "\n".join([head, "", *body, "", *_summary(shots)])
 

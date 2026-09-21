@@ -180,7 +180,7 @@ def _fmt_when(when: datetime, now: datetime) -> str:
         hours = int(delta.total_seconds() // 3600)
         minutes = int(delta.total_seconds() % 3600 // 60)
         return f"en {hours}h {minutes:02d}min"
-    return f"el {when.astimezone().strftime('%d/%m %H:%M')}"
+    return f"el {analysis.to_madrid(when).strftime('%d/%m %H:%M')}"
 
 
 def _biddable(world: World) -> list[models.MarketItem]:
@@ -620,7 +620,8 @@ def unlocks_report(world: World, hours: int = 24) -> tuple[str, dict | None]:
         p, until = sl.player, sl.clause_locked_until
         # `until` conserva la zona que trae la API (+02:00, hora de la liga): se muestra tal cual,
         # sin pasar por la zona de la máquina (en GitHub Actions sería UTC).
-        when = until.strftime("%H:%M:%S") if until.date() == now.astimezone(until.tzinfo).date() else until.strftime("%d/%m %H:%M:%S")
+        until = analysis.to_madrid(until)
+        when = until.strftime("%H:%M:%S") if until.date() == analysis.to_madrid(now).date() else until.strftime("%d/%m %H:%M:%S")
         ratio = f" (x{sl.clause / p.market_value:.2f} de su valor)" if p.market_value else ""
         cards.append(
             f"{b(when)} · {b(p.name)} <i>{esc(sl.owner_name)}</i> · cláusula {b(m(sl.clause))}{ratio} · {p.avg_points:.1f} pts/partido"
@@ -875,7 +876,8 @@ def _arm_row(name: str, player_id: str, unlock: datetime, clause: int) -> list[d
     "a:<player_id>:<importe>". La hora y el importe van en el texto y en el código, para que
     lo que confirmas sea exactamente lo que se paga: si el dueño cambia el importe, no se paga."""
     return _action_row(
-        f"🎯 Comprar {name} al desbloquearse ({unlock.strftime('%H:%M:%S')}) por {m(clause)}", f"a:{player_id}:{clause}",
+        f"🎯 Comprar {name} al desbloquearse ({analysis.to_madrid(unlock).strftime('%H:%M:%S')}) por {m(clause)}",
+        f"a:{player_id}:{clause}",
     )
 
 
@@ -904,7 +906,7 @@ def clauses_report(
     )
     frozen_note = ""
     if world.clause_freeze and world.clause_freeze[0] <= now < world.clause_freeze[1]:
-        until = world.clause_freeze[1].astimezone().strftime("%d/%m %H:%M")
+        until = analysis.to_madrid(world.clause_freeze[1]).strftime("%d/%m %H:%M")
         frozen_note = i(f"⏸️ Cláusulas congeladas hasta las {until} (empieza la jornada)")
     if not alerts:
         head = f"{b('🔐 Cláusulas')}\n{i(f'Nada relevante en las próximas {s.clause_window_hours}h')}"
@@ -1121,7 +1123,7 @@ def report_sections(
     qué pagaste por tus jugadores, así que se omite la sección de corta-pérdidas. `rival_cash`
     opcional: sin él se omiten el riesgo de que te clausulen y el saldo de rivales (requieren
     el historial completo de movimientos, más caro de pedir)."""
-    stamp = world.fetched_at.astimezone().strftime("%d/%m/%Y %H:%M")
+    stamp = analysis.to_madrid(world.fetched_at).strftime("%d/%m/%Y %H:%M")
     sections: list[tuple[str, dict | None]] = [
         (f"{b('⚽ Informe')}\n{i(stamp)}\n\n{lineup_report(world, news)}", None)
     ]

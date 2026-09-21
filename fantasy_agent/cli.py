@@ -10,31 +10,18 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from . import auth, clause_snipe, flip, models, notify, service, snipe
+from . import analysis, auth, clause_snipe, flip, models, notify, service, snipe
 from .api import FantasyAPI
 from .attendance import estimate_titularidad
 from .config import load_settings
 from .storage import Store
 
 
-def _last_sunday(year: int, month: int) -> datetime:
-    d = datetime(year, month, 31, 1, 0, tzinfo=timezone.utc)  # el cambio de hora UE es a la 01:00 UTC
-    while d.weekday() != 6:  # domingo
-        d -= timedelta(days=1)
-    return d
-
-
 def _madrid_now() -> datetime:
-    """Hora de España (CET/CEST) calculada a mano: en Windows `zoneinfo` necesita el paquete
-    `tzdata` (no viene con el sistema) y el proyecto es solo librería estándar, así que se
-    aplica la regla de la UE (DST del último domingo de marzo al último domingo de octubre)
-    sin depender de nada externo. Necesario para que las horas de juego (mercado, cláusulas)
-    signifiquen lo mismo tanto en local como en el runner de GitHub Actions (que va en UTC)."""
-    utc_now = datetime.now(timezone.utc)
-    dst_start = _last_sunday(utc_now.year, 3)
-    dst_end = _last_sunday(utc_now.year, 10)
-    offset = 2 if dst_start <= utc_now < dst_end else 1
-    return utc_now.astimezone(timezone(timedelta(hours=offset)))
+    """Hora de España ahora (ver `analysis.to_madrid`). Necesario para que las horas de juego
+    (informe diario, estudio de mercado) signifiquen lo mismo en local y en el runner de GitHub
+    Actions, que va en UTC."""
+    return analysis.to_madrid(datetime.now(timezone.utc))
 
 
 def _out(settings, text: str, telegram: bool, buttons: dict | None = None) -> None:

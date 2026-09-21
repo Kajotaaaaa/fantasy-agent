@@ -4,7 +4,7 @@ from __future__ import annotations
 import html as _html
 import math
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .lineup import Candidate, best_eleven
 from .models import (
@@ -31,6 +31,24 @@ def b(text) -> str:
 
 def i(text) -> str:
     return f"<i>{esc(text)}</i>"
+
+
+def _last_sunday(year: int, month: int) -> datetime:
+    d = datetime(year, month, 31, 1, 0, tzinfo=timezone.utc)  # el cambio de hora UE es a la 01:00 UTC
+    while d.weekday() != 6:  # domingo
+        d -= timedelta(days=1)
+    return d
+
+
+def to_madrid(dt: datetime) -> datetime:
+    """`dt` en hora de España (CET/CEST), calculada a mano: en Windows `zoneinfo` necesita el
+    paquete `tzdata` y el proyecto es solo librería estándar. Regla de la UE: horario de verano
+    del último domingo de marzo al último domingo de octubre (a la 01:00 UTC). TODA hora que se
+    muestra en un mensaje pasa por aquí: el informe se genera en GitHub Actions, donde la zona de
+    la máquina es UTC, y un `.astimezone()` a secas enseñaría la hora con 2 h de menos."""
+    utc = dt.astimezone(timezone.utc)
+    summer = _last_sunday(utc.year, 3) <= utc < _last_sunday(utc.year, 10)
+    return utc.astimezone(timezone(timedelta(hours=2 if summer else 1)))
 
 
 # ---------- tendencias de valor ---------------------------------------------
@@ -322,7 +340,7 @@ def _fmt_when(until: datetime, now: datetime) -> str:
     delta = until - now
     if delta <= timedelta(hours=48):
         return f"en {_fmt_delta(delta)}"
-    return f"el {until.astimezone().strftime('%d/%m %H:%M')}"
+    return f"el {to_madrid(until).strftime('%d/%m %H:%M')}"
 
 
 def _clause_filter(
