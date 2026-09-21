@@ -197,6 +197,36 @@ class Tests(unittest.TestCase):
         self.assertIn("aceptar", sent[0])  # beneficio sobre lo pagado (8.0M -> 8.5M)
         self.assertIn("O1", sent[0])  # el JSON crudo va incluido
 
+    def test_clause_arm_buttons_and_fire_time(self):
+        from dataclasses import replace as dc_replace
+        from fantasy_agent import clause_snipe
+
+        world = service.build_world(FakeAPI(), self.s)
+        messages, alerts = service.clauses_report(world, self.s, None)
+        armed = [
+            kb["inline_keyboard"][0][0] for _, kb in messages
+            if kb and kb["inline_keyboard"][0][0]["callback_data"].startswith("a:")
+        ]
+        # Pepe tiene su cláusula bloqueada 5 h (< 5 h 45): se puede armar; el botón lleva la hora.
+        self.assertEqual([b["callback_data"] for b in armed], ["a:pepe3"])
+        self.assertIn("Comprar pepe-J3 al desbloquearse (", armed[0]["text"])
+
+        slot = next(sl for sl in world.rival_slots if sl.player.id == "pepe3")
+        far = dc_replace(slot, clause_locked_until=NOW + timedelta(hours=8))
+        self.assertIsNone(service.alert_keyboard(far, "unlock_soon", NOW))  # demasiado lejos para un trabajo de 6 h
+        self.assertEqual(service.alert_keyboard(slot, "open_affordable", NOW)["inline_keyboard"][0][0]["callback_data"], "c:pepe3")
+
+        unlock = NOW + timedelta(hours=2)
+        self.assertEqual(clause_snipe.fire_time(unlock, None, NOW), unlock)
+        self.assertIsNone(clause_snipe.fire_time(NOW - timedelta(minutes=1), None, NOW))  # ya abierta
+        # Si el desbloqueo cae dentro de la congelación de cláusulas, se espera a que termine.
+        freeze = (NOW + timedelta(hours=1), NOW + timedelta(hours=3))
+        self.assertEqual(clause_snipe.fire_time(unlock, freeze, NOW), freeze[1])
+        self.assertEqual(clause_snipe.fire_time(unlock, (NOW + timedelta(hours=3), NOW + timedelta(hours=4)), NOW), unlock)
+        # Abierta pero en plena congelación: tampoco se puede pagar hasta que acabe.
+        self.assertEqual(clause_snipe.fire_time(None, (NOW - timedelta(hours=1), NOW + timedelta(hours=1)), NOW),
+                         NOW + timedelta(hours=1))
+
     def test_snipe_plan(self):
         from fantasy_agent import snipe
 

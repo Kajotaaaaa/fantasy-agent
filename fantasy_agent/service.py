@@ -603,6 +603,34 @@ def offers_watch_report(world: World, store=None) -> tuple[str, dict | None]:
     return head + "\n\n" + "\n".join(cards), _keyboard(rows)
 
 
+def unlocks_report(world: World, hours: int = 24) -> tuple[str, dict | None]:
+    """Próximos desbloqueos de cláusula de TODOS los rivales (sin filtro de valor: si quieres a
+    alguien en concreto, aquí lo armas), al segundo. Los que faltan menos de `MAX_ARM_HOURS`
+    llevan botón de comprar al desbloquearse."""
+    now = datetime.now(timezone.utc)
+    upcoming = sorted(
+        (sl for sl in world.rival_slots
+         if sl.player.position_id != 5 and sl.clause_locked_until and now < sl.clause_locked_until <= now + timedelta(hours=hours)),
+        key=lambda sl: sl.clause_locked_until,
+    )
+    if not upcoming:
+        return "", None
+    cards, rows = [], []
+    for sl in upcoming:
+        p, until = sl.player, sl.clause_locked_until
+        # `until` conserva la zona que trae la API (+02:00, hora de la liga): se muestra tal cual,
+        # sin pasar por la zona de la máquina (en GitHub Actions sería UTC).
+        when = until.strftime("%H:%M:%S") if until.date() == now.astimezone(until.tzinfo).date() else until.strftime("%d/%m %H:%M:%S")
+        ratio = f" (x{sl.clause / p.market_value:.2f} de su valor)" if p.market_value else ""
+        cards.append(
+            f"{b(when)} · {b(p.name)} <i>{esc(sl.owner_name)}</i> · cláusula {b(m(sl.clause))}{ratio} · {p.avg_points:.1f} pts/partido"
+        )
+        if until - now <= timedelta(hours=MAX_ARM_HOURS):
+            rows.append(_arm_row(p.name, p.id, until))
+    head = f"{b('🔓 Próximos desbloqueos de cláusula')}\n{i(f'Próximas {hours} h, al segundo. Botón solo si faltan menos de 5 h 45 min.')}"
+    return head + "\n\n" + "\n".join(cards), _keyboard(rows)
+
+
 def my_bids_report(world: World) -> tuple[str, dict | None]:
     """Tus pujas pendientes (la API marca la tuya en cada anuncio, ver `MarketItem.my_bid_id`),
     cada una con botón para cambiarla al mínimo de ahora / con margen si hay margen."""
@@ -833,10 +861,30 @@ def clause_titularidad_candidates(world: World, s: Settings) -> list[models.Play
     return analysis.clause_candidate_players(world.rival_slots, now, s.clause_window_hours)
 
 
+MAX_ARM_HOURS = 5.75  # un trabajo de GitHub aguanta ~6 h: solo se puede armar con menos que esto por delante
+
+
 def _clause_keyboard(player_id: str) -> dict:
     """Teclado con el botón de pagar cláusula. `callback_data` lleva el código de acción que
     entiende `cli.cmd_execute_action` (ver CLAUDE.md, sección de botones): "c:<player_id>"."""
     return {"inline_keyboard": [[{"text": "💳 Pagar cláusula", "callback_data": f"c:{player_id}"}]]}
+
+
+def _arm_row(name: str, player_id: str, unlock: datetime) -> list[dict]:
+    """Botón de comprar la cláusula EN EL SEGUNDO en que se desbloquea (ver `clause_snipe`):
+    "a:<player_id>". La hora va en el texto para que se vea a qué instante te comprometes."""
+    return _action_row(f"🎯 Comprar {name} al desbloquearse ({unlock.strftime('%H:%M:%S')})", f"a:{player_id}")
+
+
+def alert_keyboard(slot: models.SquadSlot, kind: str, now: datetime) -> dict | None:
+    """Botón de una alerta de cláusula: pagar ya si está abierta y es pagable; comprar al
+    desbloquearse si se libera en menos de `MAX_ARM_HOURS`; nada en otro caso."""
+    if kind == "open_affordable":
+        return _clause_keyboard(slot.player.id)
+    until = slot.clause_locked_until
+    if kind == "unlock_soon" and until and timedelta(0) < until - now <= timedelta(hours=MAX_ARM_HOURS):
+        return _keyboard([_arm_row(slot.player.name, slot.player.id, until)])
+    return None
 
 
 def clauses_report(
@@ -858,10 +906,7 @@ def clauses_report(
     if not alerts:
         head = f"{b('🔐 Cláusulas')}\n{i(f'Nada relevante en las próximas {s.clause_window_hours}h')}"
         return [(head + (("\n\n" + frozen_note) if frozen_note else ""), None)], alerts
-    messages = [
-        (f"🔐 {a.message}", _clause_keyboard(a.slot.player.id) if a.kind == "open_affordable" else None)
-        for a in alerts
-    ]
+    messages = [(f"🔐 {a.message}", alert_keyboard(a.slot, a.kind, now)) for a in alerts]
     if frozen_note:
         messages.append((frozen_note, None))
     return messages, alerts

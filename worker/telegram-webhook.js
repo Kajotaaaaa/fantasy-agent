@@ -21,7 +21,11 @@ const PAYLOADS = {
   u: /^\d{1,12}:\d{1,12}:\d{1,12}$/, // cambiar puja: "<anuncio>:<puja>:<cantidad>"
   s: /^\d{1,12}$/,
   w: /^\d{1,12}$/,
+  a: /^\d{1,12}$/, // armar la compra de una cláusula al desbloquearse
 };
+// Qué workflow lanza cada verbo al confirmar: por defecto el corto de acciones (fantasy-action);
+// armar una cláusula espera hasta el desbloqueo, así que va a su propio trabajo largo.
+const EVENTS = { a: "fantasy-clause-snipe" };
 const CONFIRM_PREFIX = "✅ Confirmar · ";
 
 const tg = (env, method, body) =>
@@ -169,7 +173,7 @@ export default {
     }
     await answer("Ejecutando…");
     await setKeyboard(withoutCancel.filter((row) => !hasCode(row, confirmCode)));
-    const res = await dispatch(env, "fantasy-action", { action: code });
+    const res = await dispatch(env, EVENTS[verb] || "fantasy-action", { action: code });
     if (!res.ok) {
       await setKeyboard([
         ...withoutCancel.filter((row) => !hasCode(row, confirmCode)),

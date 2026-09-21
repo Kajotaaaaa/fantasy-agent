@@ -9,6 +9,31 @@ def telegram_enabled(settings: Settings) -> bool:
     return bool(settings.telegram_token and settings.telegram_chat_id)
 
 
+def send_message(settings: Settings, text: str) -> int | None:
+    """Un solo mensaje (sin trocear) devolviendo su `message_id`, para poder editarlo luego
+    (`edit_message`): contadores atrás que se actualizan en el sitio."""
+    if not telegram_enabled(settings):
+        raise RuntimeError("Configura TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID en el .env")
+    resp = request_json(
+        "POST", f"https://api.telegram.org/bot{settings.telegram_token}/sendMessage",
+        json_body={"chat_id": settings.telegram_chat_id, "text": text, "parse_mode": "HTML"},
+    )
+    return (resp or {}).get("result", {}).get("message_id")
+
+
+def edit_message(settings: Settings, message_id: int, text: str) -> None:
+    """Reescribe un mensaje ya enviado. Un fallo (mensaje idéntico, límite de ediciones) no debe
+    tumbar quien lo llama: es solo cosmética."""
+    try:
+        request_json(
+            "POST", f"https://api.telegram.org/bot{settings.telegram_token}/editMessageText",
+            json_body={"chat_id": settings.telegram_chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"},
+            retries=0,
+        )
+    except Exception:
+        pass
+
+
 def send_telegram(settings: Settings, text: str, buttons: dict | None = None) -> None:
     """`buttons` es un teclado inline de Telegram ya en su forma cruda
     (`{"inline_keyboard": [[{"text": ..., "callback_data": ...}]]}`). Si el texto se trocea

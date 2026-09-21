@@ -1,0 +1,63 @@
+name: fantasy-clause-snipe
+
+# Compra armada de una cláusula (fantasy_agent/clause_snipe.py). Lo dispara el Worker de
+# Cloudflare cuando confirmas "🎯 Comprar al desbloquearse" en Telegram (repository_dispatch,
+# action="a:<player_id>"). El trabajo ESPERA hasta el desbloqueo (como mucho ~5 h 45 min: un
+# trabajo de GitHub aguanta 6 h) y paga en ese segundo. Sin grupo de concurrencia: puedes armar
+# varias a la vez. La acción entra por variable de entorno, no interpolada en el script.
+on:
+  repository_dispatch:
+    types: [fantasy-clause-snipe]
+
+jobs:
+  snipe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restaurar sesión
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: fantasy-state-${{ github.run_id }}
+          restore-keys: |
+            fantasy-state-
+
+      - name: Sembrar sesión inicial si no hay caché todavía
+        run: |
+          mkdir -p data
+          if [ ! -s data/tokens.json ] && [ -n "$FANTASY_TOKENS_JSON" ]; then
+            echo "$FANTASY_TOKENS_JSON" > data/tokens.json
+          fi
+        env:
+          FANTASY_TOKENS_JSON: ${{ secrets.FANTASY_TOKENS_JSON }}
+
+      - name: Huella de la sesión antes
+        id: before
+        run: echo "hash=$(sha256sum data/tokens.json 2>/dev/null | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: fantasy clause-snipe
+        run: python -m fantasy_agent clause-snipe "$FANTASY_ACTION"
+        env:
+          FANTASY_ACTION: ${{ github.event.client_payload.action }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FANTASY_LEAGUE_ID: ${{ secrets.FANTASY_LEAGUE_ID }}
+          FANTASY_TEAM_ID: ${{ secrets.FANTASY_TEAM_ID }}
+
+      - name: Huella de la sesión después
+        id: after
+        if: always()
+        run: echo "hash=$(sha256sum data/tokens.json 2>/dev/null | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Guardar estado actualizado (solo si la sesión cambió)
+        if: always() && steps.before.outputs.hash != steps.after.outputs.hash
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: fantasy-state-${{ github.run_id }}

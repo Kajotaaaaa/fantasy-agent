@@ -16,6 +16,34 @@ aparecen los resultados y el mercado nuevo, unos minutos DESPUÉS del cierre rea
 estudio del mercado nuevo va a las 21:05). Cualquier cosa que actúe sobre una puja "en el
 último momento" debe terminar antes de las 21:00:00, no de las 21:02.
 
+## Comprar una cláusula en el segundo en que se desbloquea (`clause_snipe.py`)
+Pedido del usuario: ser el primero en clausular. El vigilante de 30 min y el botón normal (20-60
+s de Telegram -> Worker -> runner) llegan tarde, pero la hora de desbloqueo
+(`buyoutClauseLockedEndTime`) se conoce AL SEGUNDO. Solución: ARMAR la compra con antelación.
+- Botón `a:<player_id>` "🎯 Comprar X al desbloquearse (HH:MM:SS)" en las alertas de cláusula
+  `unlock_soon` con menos de `service.MAX_ARM_HOURS` (5.75 h) por delante y en el informe
+  `unlocks` (próximos desbloqueos de 24 h de TODOS los rivales, sin filtro de valor: aquí armas a
+  quien quieras). Doble confirmación de siempre en el Worker; el verbo `a` lanza
+  `repository_dispatch` `fantasy-clause-snipe` (mapa `EVENTS` del Worker) ->
+  `.github/workflows/clause-snipe.yml` (timeout 355 min, sin concurrencia: se pueden armar
+  varias) -> `python -m fantasy_agent clause-snipe "a:<id>"`.
+- El trabajo espera con la hora del servidor (cabecera `Date`), a T-25 s relee la plantilla del
+  dueño (id de hueco y cláusula al día) y el saldo, cuenta atrás editando un mensaje de Telegram
+  cada 10 s desde T-60 s, y a T+0 dispara `pay_clause` cada 0.15 s hasta 20 s (sin el ritmo de
+  peticiones "humano"). Si el pago cuelga o da error raro, comprueba si el jugador ya es tuyo
+  antes de reintentar (no paga dos veces). Un 409 "importe no actualizado" relee la cláusula.
+- **Autorización explícita del usuario (2026-09-21):** al armar y confirmar, el bot puede gastar
+  el dinero necesario para clausular a ESE jugador. Topes aun así: `CAP_FACTOR` 1.25x la
+  cláusula del momento de armar (si el dueño la sube más, cancela y avisa), nunca sin saldo
+  (no se puede pagar cláusula endeudándose) y si el desbloqueo cae en la congelación de
+  cláusulas de la liga (`world.clause_freeze`) espera a que termine (`fire_time`).
+- Pruebas: `python -m fantasy_agent clause-snipe a:<id> --dry --unlock-in 45` simula un
+  desbloqueo en 45 s con todo real menos el pago (mensajes marcados "(SIMULACRO)").
+- Límite: un trabajo de GitHub dura como mucho 6 h, por eso solo se arma con menos de 5 h 45 min
+  por delante; para cancelar un armado hay que cancelar el run en GitHub Actions.
+- Aún sin verificar en real: el error exacto que da el servidor al pagar ANTES del desbloqueo
+  (se reintenta ante cualquier HttpError), así que el primer uso real es también la prueba.
+
 ## Rebaja de último segundo (`snipe.py`)
 Idea del usuario: si al final de la subasta eres el ÚNICO que ha pujado, no hace falta pagar
 más que el mínimo válido. El anuncio trae `numberOfBids` y tu `bid`: con `numberOfBids == 1` y

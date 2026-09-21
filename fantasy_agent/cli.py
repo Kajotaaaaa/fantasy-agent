@@ -10,7 +10,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from . import auth, flip, models, notify, service, snipe
+from . import auth, clause_snipe, flip, models, notify, service, snipe
 from .api import FantasyAPI
 from .attendance import estimate_titularidad
 from .config import load_settings
@@ -351,6 +351,22 @@ def cmd_snipe(args, s) -> None:
     snipe.send(FantasyAPI(s), s, mode, close_in=args.close_in)
 
 
+def cmd_clause_snipe(args, s) -> None:
+    """Entrada interna del botón "🎯 Comprar al desbloquearse" (Worker -> repository_dispatch ->
+    clause-snipe.yml -> aquí): espera al desbloqueo y paga en ese segundo (ver clause_snipe.py).
+    Código de acción "a:<player_id>". Como `execute-action`, no tiene vista previa."""
+    if not notify.telegram_enabled(s):
+        sys.exit("clause-snipe necesita Telegram configurado (informa del resultado por ahí)")
+    verb, _, player_id = args.action.partition(":")
+    if verb != "a" or not player_id.isdigit():
+        sys.exit(f"Acción no reconocida: {args.action!r}")
+    try:
+        clause_snipe.run(FantasyAPI(s), s, player_id, dry=args.dry, unlock_in=args.unlock_in)
+    except Exception as exc:
+        print(f"[error] {args.action}: {exc}")
+        notify.send_telegram(s, f"❌ {service.b('No pude armar/ejecutar la compra')}\n{service.esc(str(exc)[:300])}")
+
+
 def cmd_set_webhook(args, s) -> None:
     """Una sola vez tras desplegar el Worker: le dice a Telegram a dónde mandar los botones."""
     print(json.dumps(notify.set_webhook(s, args.url, args.secret), ensure_ascii=False))
@@ -401,6 +417,10 @@ def cmd_section(args, s) -> None:
         text, buttons = service.market_arrivals_report(world, store)
         return text or "Nada nuevo desde el último estudio.", buttons
 
+    def unlocks() -> tuple[str, dict | None]:
+        text, buttons = service.unlocks_report(world)
+        return text or "Ninguna cláusula se desbloquea en las próximas 24 h.", buttons
+
     def bids() -> tuple[str, dict | None]:
         text, buttons = service.my_bids_report(world)
         return text or "No tienes ninguna puja pendiente ahora mismo.", buttons
@@ -428,6 +448,7 @@ def cmd_section(args, s) -> None:
         )(service.offers_watch_report(world, store)),
         "listings": listings,
         "bids": bids,
+        "unlocks": unlocks,
         "advice": lambda: (service.daily_advice_report(world, rival_cash), None),
     }[args.cmd]()
     _out(s, text, args.telegram, buttons=buttons)
@@ -460,8 +481,9 @@ def _watch_once(store: Store, s) -> str:
     _, alerts = service.clauses_report(world, s, clause_news)
     fresh = [a for a in alerts if store.alert_is_new(a.key)]
     for a in fresh:
-        buttons = service._clause_keyboard(a.slot.player.id) if a.kind == "open_affordable" else None
-        notify.send_telegram(s, f"🚨 {a.message}", buttons=buttons)
+        notify.send_telegram(
+            s, f"🚨 {a.message}", buttons=service.alert_keyboard(a.slot, a.kind, datetime.now(timezone.utc)),
+        )
 
     _, hot_alerts = service.speculative_clauses_report(world, s)
     fresh_hot = [a for a in hot_alerts if store.alert_is_new(a.key)]
@@ -606,6 +628,7 @@ def main(argv: list[str] | None = None) -> None:
         ("listen", "A quién poner a escuchar ofertas (tendencia bajando), con botón de vender"),
         ("listings", "Tus jugadores en venta ahora, con botón para retirarlos"),
         ("bids", "Tus pujas pendientes, con botón para cambiarlas"),
+        ("unlocks", "Próximos desbloqueos de cláusula (24 h), con botón de comprar al desbloquearse"),
         ("advice", "Consejo táctico del día"),
         ("report", "Informe completo"),
     ]:
@@ -650,6 +673,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("player_id", help="id del jugador (el tuyo, puesto a la venta)")
     p.add_argument("--confirm", action="store_true", help="ejecuta de verdad; sin esto solo es vista previa")
     p.set_defaults(func=cmd_withdraw)
+
+    p = sub.add_parser("clause-snipe", help="Interno: espera al desbloqueo de una cláusula y la paga en ese segundo")
+    p.add_argument("action", help='código de acción, p.ej. "a:2206"')
+    p.add_argument("--dry", action="store_true", help="solo pruebas: simula el pago (no paga nada)")
+    p.add_argument("--unlock-in", type=float, default=None, help="solo pruebas: desbloqueo ficticio en N segundos")
+    p.set_defaults(func=cmd_clause_snipe)
 
     p = sub.add_parser("snipe", help="Rebaja de último segundo de tus pujas si eres el único que puja")
     p.add_argument("--close-in", type=float, default=None, help="solo pruebas: cierre ficticio en N segundos")
