@@ -210,34 +210,82 @@ def cmd_withdraw(args, s) -> None:
     print(json.dumps(result, indent=2, ensure_ascii=False)[:2000] if result else "(sin cuerpo de respuesta)")
 
 
+def _act_clause(api, s, player_id: str) -> str:
+    world = service.build_world(api, s, with_trends=False)
+    slot = next((sl for sl in world.rival_slots if sl.player.id == player_id), None)
+    if not slot:
+        raise RuntimeError("Ese jugador ya no está disponible para clausular (puede que ya se lo hayan llevado).")
+    api.clear_cache()
+    fresh = models.parse_squad(api.team(world.league_id, slot.owner_team_id), slot.owner_team_id, slot.owner_name)
+    fresh_slot = next((sl for sl in fresh if sl.player.id == player_id), None)
+    if not fresh_slot:
+        raise RuntimeError("Ese jugador ya no está en esa plantilla (puede que ya se lo hayan clausulado).")
+    api.pay_clause(world.league_id, fresh_slot.player_team_id, fresh_slot.clause)
+    return f"✅ {service.b('Cláusula pagada')}\n{service.b(fresh_slot.player.name)} por {service.m(fresh_slot.clause)}"
+
+
+def _act_bid(api, s, listing_id: str) -> str:
+    """Puja al precio pedido (mínimo válido). Sin techo propio: el precio ya lo has visto en el
+    botón. Nunca por encima del saldo — regla del usuario, prohibido quedarse en negativo."""
+    league_id, _, cash = service.resolve_league(api, s)
+    item = next((x for x in models.parse_market(api.market(league_id)) if x.listing_id == listing_id), None)
+    if not item:
+        raise RuntimeError("Ese anuncio ya no está en el mercado.")
+    if item.seller != "LaLiga":
+        raise RuntimeError("Solo se puede pujar por anuncios de LaLiga.")
+    if cash is not None and item.price > cash:
+        raise RuntimeError(f"No te llega el saldo ({service.m(cash)}) para pujar {service.m(item.price)}.")
+    api.bid(league_id, item.listing_id, item.price)
+    return (
+        f"✅ {service.b('Puja enviada')}\n{service.b(item.player.name)} por {service.m(item.price)}\n"
+        f"{service.i('Queda pendiente: se resuelve al cierre del mercado, el saldo no baja ya.')}"
+    )
+
+
+def _act_sell(api, s, player_id: str) -> str:
+    world = service.build_world(api, s, with_trends=False)
+    slot = next((sl for sl in world.my_slots if sl.player.id == player_id), None)
+    if not slot:
+        raise RuntimeError("Ese jugador ya no está en tu plantilla.")
+    price = slot.player.market_value
+    if not price or not slot.player_team_id:
+        raise RuntimeError("No tengo precio o id de plantilla para ponerlo a la venta.")
+    api.list_for_sale(world.league_id, slot.player_team_id, price)
+    return (
+        f"✅ {service.b('A la venta')}\n{service.b(slot.player.name)} por {service.m(price)}\n"
+        f"{service.i('El juego manda ofertas en el ciclo de las 21:00; las revisas y decides tú.')}"
+    )
+
+
+def _act_withdraw(api, s, player_id: str) -> str:
+    world = service.build_world(api, s, with_trends=False)
+    mine = {sl.player.id for sl in world.my_slots}
+    item = next((x for x in world.market if x.player.id == player_id and player_id in mine), None)
+    if not item:
+        raise RuntimeError("Ese jugador ya no está en venta.")
+    api.withdraw_from_market(world.league_id, item.listing_id)
+    return f"✅ {service.b('Retirado del mercado')}\n{service.b(item.player.name)} ya no está a la venta."
+
+
+_ACTIONS = {"c": _act_clause, "b": _act_bid, "s": _act_sell, "w": _act_withdraw}
+
+
 def cmd_execute_action(args, s) -> None:
     """Entrada interna para el flujo de botones de Telegram (webhook → Cloudflare Worker →
     repository_dispatch → este comando). A diferencia de `bid`/`clause`/`sell`/`withdraw`, NO
     tiene vista previa: solo se llega aquí después de que el Worker ya pidió confirmación con
     un segundo botón ("¿Seguro?"), así que aquí siempre se ejecuta de verdad. No lo lances a
     mano salvo que sepas exactamente qué código de acción estás pasando (ver CLAUDE.md, sección
-    de botones, para el formato "c:<player_id>")."""
+    de botones, para el formato "<verbo>:<id>")."""
     if not notify.telegram_enabled(s):
         sys.exit("execute-action necesita Telegram configurado (informa del resultado por ahí)")
-    verb, _, rest = args.action.partition(":")
+    verb, _, target = args.action.partition(":")
     api = FantasyAPI(s)
     try:
-        if verb != "c":
+        act = _ACTIONS.get(verb)
+        if act is None or not target:
             raise RuntimeError(f"Acción no reconocida: {args.action!r}")
-        player_id = rest
-        world = service.build_world(api, s, with_trends=False)
-        slot = next((sl for sl in world.rival_slots if sl.player.id == player_id), None)
-        if not slot:
-            raise RuntimeError("Ese jugador ya no está disponible para clausular (puede que ya se lo hayan llevado).")
-        api.clear_cache()
-        fresh = models.parse_squad(api.team(world.league_id, slot.owner_team_id), slot.owner_team_id, slot.owner_name)
-        fresh_slot = next((sl for sl in fresh if sl.player.id == player_id), None)
-        if not fresh_slot:
-            raise RuntimeError("Ese jugador ya no está en esa plantilla (puede que ya se lo hayan clausulado).")
-        api.pay_clause(world.league_id, fresh_slot.player_team_id, fresh_slot.clause)
-        notify.send_telegram(
-            s, f"✅ {service.b('Cláusula pagada')}\n{service.b(fresh_slot.player.name)} por {service.m(fresh_slot.clause)}"
-        )
+        notify.send_telegram(s, act(api, s, target))
     except Exception as exc:
         notify.send_telegram(s, f"❌ {service.b('No se pudo ejecutar')}\n{service.esc(str(exc))}")
         raise
@@ -284,18 +332,32 @@ def cmd_section(args, s) -> None:
         for msg, buttons in messages:
             _out(s, msg, args.telegram, buttons=buttons)
         return
-    text = {
-        "market": lambda: service.market_report(world),
-        "trends": lambda: service.trends_report(world),
-        "rivals": lambda: service.rivals_report(world, rival_cash),
-        "clause-risk": lambda: service.clause_theft_report(world, rival_cash) or "Ningún rival te llega ahora mismo.",
-        "lineup": lambda: service.lineup_report(world, news),
-        "losses": lambda: service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.",
-        "sell-candidates": lambda: service.sell_candidates_report(world, store) or "Nadie con tendencia bajando ahora mismo.",
-        "market-news": lambda: service.market_arrivals_report(world, store) or "Nada nuevo desde el último estudio.",
-        "advice": lambda: service.daily_advice_report(world, rival_cash),
+    def arrivals() -> tuple[str, dict | None]:
+        text, buttons = service.market_arrivals_report(world, store)
+        return text or "Nada nuevo desde el último estudio.", buttons
+
+    def listings() -> tuple[str, dict | None]:
+        text, buttons = service.my_listings_report(world)
+        return text or "No tienes a nadie a la venta ahora mismo.", buttons
+
+    text, buttons = {
+        "market": lambda: (service.market_report(world), service.market_keyboard(world)),
+        "trends": lambda: (service.trends_report(world), None),
+        "rivals": lambda: (service.rivals_report(world, rival_cash), None),
+        "clause-risk": lambda: (
+            service.clause_theft_report(world, rival_cash) or "Ningún rival te llega ahora mismo.", None,
+        ),
+        "lineup": lambda: (service.lineup_report(world, news), None),
+        "losses": lambda: (service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.", None),
+        "sell-candidates": lambda: (
+            service.sell_candidates_report(world, store) or "Nadie con tendencia bajando ahora mismo.",
+            service.sell_keyboard(world, store),
+        ),
+        "market-news": arrivals,
+        "listings": listings,
+        "advice": lambda: (service.daily_advice_report(world, rival_cash), None),
     }[args.cmd]()
-    _out(s, text, args.telegram)
+    _out(s, text, args.telegram, buttons=buttons)
 
 
 def _watch_once(store: Store, s) -> str:
@@ -337,9 +399,9 @@ def _watch_once(store: Store, s) -> str:
         notify.send_telegram(s, "<b>📒 Movimientos en tu equipo</b>\n\n" + "\n\n".join(tx))
 
     if market_due:
-        arrivals = service.market_arrivals_report(world, store)
+        arrivals, arrivals_buttons = service.market_arrivals_report(world, store)
         if arrivals:
-            notify.send_telegram(s, arrivals)
+            notify.send_telegram(s, arrivals, buttons=arrivals_buttons)
         store.set("last_market_study", today)
 
     if daily_due:
@@ -425,7 +487,8 @@ def main(argv: list[str] | None = None) -> None:
         ("losses", "Jugadores tuyos por debajo de lo que pagaste"),
         ("sell-candidates", "Candidatos a vender: tendencia bajando 3 días"),
         ("market-news", "Nuevo en el mercado desde el último estudio, con veredicto"),
-        ("advice", "Consejo táctico del día (capitán ya va dentro de 'lineup')"),
+        ("listings", "Tus jugadores en venta ahora, con botón para retirarlos"),
+        ("advice", "Consejo táctico del día"),
         ("report", "Informe completo"),
     ]:
         p = sub.add_parser(name, help=help_)

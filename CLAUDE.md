@@ -184,17 +184,32 @@ de la versión premium del juego y esta liga no la tiene — se eliminó por com
 tip relacionado en `STRATEGY_TIPS`). Si algún día hay premium de por medio, revisar el
 historial de git antes de reconstruirlo desde cero.
 
-## Botones de Telegram (pagar cláusula) — webhook en tiempo real
-Elegido por el usuario: webhook (no sondeo). Cada alerta de cláusula pagable ya
-(`kind == "open_affordable"`, y todas las especulativas) lleva un botón "💳 Pagar cláusula".
+## Botones de Telegram (cláusula, puja, venta, retirada) — webhook en tiempo real
+Elegido por el usuario: webhook (no sondeo). Cuatro acciones, código `<verbo>:<id>`:
+| código | botón | dónde sale | qué ejecuta `cli._act_*` |
+|---|---|---|---|
+| `c:<player_id>` | 💳 Pagar cláusula | alerta de cláusula pagable ya (`open_affordable`) y todas las especulativas | relee la plantilla del rival SIN caché y paga con `playerTeamId` |
+| `b:<listing_id>` | 💰 Pujar <nombre> <precio> | "Mercado para tu once" + "Inversión" (un mensaje, una fila por jugador) y "Nuevo en el mercado" (solo ≥3 ★) | puja al precio pedido; solo anuncios de LaLiga; nunca por encima del saldo |
+| `s:<player_id>` | 📤 Vender <nombre> <valor> | "Candidatos a vender" (tendencia a la baja) salvo los que ya están en venta | pone a la venta a valor de mercado |
+| `w:<player_id>` | ↩️ Retirar <nombre> | "En venta ahora" (`my_listings_report`, comando `listings`) | retira el anuncio |
+
 Los avisos "se libera en Xh" no llevan botón (aún no se puede pagar).
 ```
-botón "c:<player_id>" → Worker cambia a [Sí, pagar "C:<id>"] [Cancelar "N:c:<id>"]
-"C:<id>" → Worker quita botones + repository_dispatch(fantasy-action, action="c:<id>")
-        → .github/workflows/action.yml → `python -m fantasy_agent execute-action "c:<id>"`
-        → cmd_execute_action relee la plantilla del rival SIN caché, paga con playerTeamId
-          y avisa por Telegram (✅ / ❌ con el motivo)
+botón "b:<id>" → Worker cambia SU fila a [✅ Confirmar · <etiqueta> "B:<id>"] + [❌ Cancelar "N:b:<id>"]
+"B:<id>" → Worker quita esas filas + repository_dispatch(fantasy-action, action="b:<id>")
+        → .github/workflows/action.yml → `python -m fantasy_agent execute-action "b:<id>"`
+        → cmd_execute_action → `_ACTIONS[verbo]` → avisa por Telegram (✅ / ❌ con el motivo)
 ```
+- Un mensaje puede llevar varias filas (una por jugador). El estado de cada fila vive en el
+  propio teclado (el Worker lo lee de `callback_query.message.reply_markup`), sin base de datos:
+  la etiqueta original se recupera de "✅ Confirmar · <etiqueta>" al cancelar. Si al confirmar
+  el botón ya no está en el teclado (doble pulsación), no se dispara nada por segunda vez.
+- `report_sections` ya no junta compra y venta en un mensaje: "Mercado + Inversión" (botones de
+  puja), "Tus jugadores" (tendencias + corta-pérdidas + candidatos, botones de venta) y "En
+  venta ahora" (botones de retirar, solo si tienes a alguien en venta).
+- Pendientes de verificar en real: pujar y vender por botón usan los mismos endpoints ya
+  verificados con `bid`/`sell`/`withdraw`, pero el circuito completo por botón solo se ha
+  probado con `c:` y un id inexistente.
 - El doble paso "¿Seguro?" vive en el Worker (`worker/telegram-webhook.js`); `execute-action` NO
   tiene vista previa, por eso no debe lanzarse a mano sin saber qué código pasas.
 - Worker: solo atiende el `TELEGRAM_CHAT_ID` configurado, exige la cabecera secreta que Telegram

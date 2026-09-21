@@ -246,34 +246,35 @@ def find_player(api: FantasyAPI, world: World, player_id: str) -> models.Player 
         return None
 
 
-def market_report(world: World, min_score: float = 8.0) -> str:
-    """Fichajes deportivos para tu once. Un TOP de la liga sale siempre, aunque su score sea
-    bajo por precio: no es una cuestión de "compensa el precio", es que es de los mejores del
-    campeonato en su puesto y te lo estás perdiendo si no lo ves. Lleva también su lado
-    económico (tendencia y proyección a 14 días): fichar bien y que encima suba de valor
-    no son cosas distintas, es la misma decisión."""
-    cards = []
+def _keyboard(rows: list[list[dict]]) -> dict | None:
+    """Teclado inline de Telegram (o None si no hay filas). Una fila por acción, sin repetir
+    la misma acción dos veces (`callback_data` igual)."""
+    seen, unique = set(), []
+    for row in rows:
+        code = row[0]["callback_data"]
+        if code not in seen:
+            seen.add(code)
+            unique.append(row)
+    return {"inline_keyboard": unique} if unique else None
+
+
+def _action_row(label: str, code: str) -> list[dict]:
+    return [{"text": label, "callback_data": code}]
+
+
+def _market_picks(world: World, min_score: float = 8.0) -> list[tuple[models.MarketItem, analysis.Trend, bool]]:
+    picks = []
     for o in _opportunities(world):
         p = o.item.player
         is_top = p.id in world.league_top_ids
         if o.score < min_score and not is_top:
             continue
-        star = "🌟 " if is_top else ""
         trend = world.trends.get(p.id, (p, analysis.Trend(0, 0, 0)))[1]
-        cards.append(
-            f"{star}{b(p.name)}  <i>{p.position} · {esc(p.team)}</i>\n"
-            f"💰 {b(m(o.item.price))} · {p.avg_points:.1f} pts/partido\n"
-            f"{i(analysis.trend_words(trend))}"
-        )
-    if not cards:
-        return ""
-    head = f"{b('🛒 Mercado para tu once')}\n{i('Saldo disponible: ' + m(world.my_cash))}"
-    return head + "\n\n" + "\n\n".join(cards)
+        picks.append((o.item, trend, is_top))
+    return picks
 
 
-def investment_report(world: World, top: int = 5) -> str:
-    """Comprar barato y revender. Los TOP de la liga NO entran aquí: a esos los quieres
-    para tu equipo, no para venderlos en 14 días."""
+def _investment_picks(world: World, top: int = 5) -> list[tuple[models.MarketItem, analysis.Trend]]:
     picks = []
     for item in _biddable(world):
         if item.player.id in world.league_top_ids:
@@ -282,11 +283,47 @@ def investment_report(world: World, top: int = 5) -> str:
         score = analysis.score_investment(item, trend)
         if score is not None:
             picks.append((score, item, trend))
+    picks.sort(key=lambda x: -x[0])
+    return [(item, trend) for _, item, trend in picks[:top]]
+
+
+def _bid_row(item: models.MarketItem) -> list[dict]:
+    return _action_row(f"💰 Pujar {item.player.name} {m(item.price)}", f"b:{item.listing_id}")
+
+
+def market_report(world: World, min_score: float = 8.0) -> str:
+    """Fichajes deportivos para tu once. Un TOP de la liga sale siempre, aunque su score sea
+    bajo por precio: no es una cuestión de "compensa el precio", es que es de los mejores del
+    campeonato en su puesto y te lo estás perdiendo si no lo ves. Lleva también su lado
+    económico (tendencia y proyección a 14 días): fichar bien y que encima suba de valor
+    no son cosas distintas, es la misma decisión."""
+    cards = []
+    for item, trend, is_top in _market_picks(world, min_score):
+        p = item.player
+        star = "🌟 " if is_top else ""
+        cards.append(
+            f"{star}{b(p.name)}  <i>{p.position} · {esc(p.team)}</i>\n"
+            f"💰 {b(m(item.price))} · {p.avg_points:.1f} pts/partido\n"
+            f"{i(analysis.trend_words(trend))}"
+        )
+    if not cards:
+        return ""
+    head = f"{b('🛒 Mercado para tu once')}\n{i('Saldo disponible: ' + m(world.my_cash))}"
+    return head + "\n\n" + "\n\n".join(cards)
+
+
+def market_keyboard(world: World, min_score: float = 8.0) -> dict | None:
+    return _keyboard([_bid_row(item) for item, _, _ in _market_picks(world, min_score) if item.listing_id])
+
+
+def investment_report(world: World, top: int = 5) -> str:
+    """Comprar barato y revender. Los TOP de la liga NO entran aquí: a esos los quieres
+    para tu equipo, no para venderlos en 14 días."""
+    picks = _investment_picks(world, top)
     if not picks:
         return ""
-    picks.sort(key=lambda x: -x[0])
     cards = []
-    for score, item, t in picks[:top]:
+    for item, t in picks:
         p = item.player
         cards.append(
             f"{b(p.name)}  <i>{esc(p.team)}</i>\n"
@@ -295,6 +332,13 @@ def investment_report(world: World, top: int = 5) -> str:
         )
     head = f"{b('💹 Oportunidades de inversión')}\n{i('Comprar y revender, no para tu once')}"
     return head + "\n\n" + "\n\n".join(cards)
+
+
+def buy_keyboard(world: World) -> dict | None:
+    """Botones de puja de las dos listas de compra (mercado para tu once + inversión)."""
+    rows = [_bid_row(item) for item, _, _ in _market_picks(world) if item.listing_id]
+    rows += [_bid_row(item) for item, _ in _investment_picks(world) if item.listing_id]
+    return _keyboard(rows)
 
 
 def trends_report(world: World) -> str:
@@ -319,12 +363,13 @@ def trends_report(world: World) -> str:
     return f"{b('📊 Tus jugadores: vender o mantener')}\n\n" + "\n".join(lines)
 
 
-def market_arrivals_report(world: World, store) -> str:
+def market_arrivals_report(world: World, store) -> tuple[str, dict | None]:
     """Lo que ha entrado nuevo al mercado de LaLiga desde el último estudio (pensado para
     correr una vez al día, justo tras el refresco diario del mercado a las 21:00) con un
     veredicto propio para cada fichaje — no una lista recortada por nota de corte, sino
     "esto es lo fresco y esto es lo que opino de cada uno". Guarda qué ids ha visto para poder
-    distinguir "nuevo" de "ya lo vi ayer y sigue sin venderse"."""
+    distinguir "nuevo" de "ya lo vi ayer y sigue sin venderse". Devuelve (texto, teclado): solo
+    llevan botón de puja los que el veredicto valora con 3 estrellas o más."""
     current = _biddable(world)
     seen = set(store.prefixed("market_seen:").keys())
     now_ids = {item.player.id for item in current}
@@ -334,7 +379,7 @@ def market_arrivals_report(world: World, store) -> str:
     for item in current:
         store.set(f"market_seen:{item.player.id}", "1")
     if not new_items:
-        return ""
+        return "", None
 
     rows = []
     for item in new_items:
@@ -354,7 +399,8 @@ def market_arrivals_report(world: World, store) -> str:
             f"{i(detail)}"
         )
     head = f"{b('🗞️ Nuevo en el mercado')}\n{i('Estudio de viabilidad')}"
-    return head + "\n\n" + "\n".join(cards)
+    keyboard = _keyboard([_bid_row(item) for stars, item, *_ in rows if stars >= 3 and item.listing_id])
+    return head + "\n\n" + "\n".join(cards), keyboard
 
 
 def losing_positions_report(world: World, store) -> str:
@@ -376,27 +422,63 @@ def losing_positions_report(world: World, store) -> str:
     return f"{b('🔻 Corta pérdidas')}\n{i('Por debajo de lo que pagaste')}\n\n" + "\n".join(cards)
 
 
-def sell_candidates_report(world: World, store) -> str:
-    """Candidatos a poner a la venta según tendencia (ver `analysis.sell_candidates`): lleva
-    bajando 3 días, sea cual sea la pérdida acumulada. Es un aviso, no ejecuta nada — pon a la
-    venta con el comando `sell` tras revisarlo."""
+def _my_listings(world: World) -> list[models.MarketItem]:
+    """Tus jugadores que ahora mismo están puestos a la venta en el mercado."""
+    mine = {sl.player.id for sl in world.my_slots}
+    return [item for item in world.market if item.player.id in mine]
+
+
+def _sell_candidates(world: World, store) -> tuple[list[models.SquadSlot], dict[str, int], dict[str, analysis.Trend]]:
     buy_prices = {pid: int(v) for pid, v in store.prefixed("buy_price:").items()}
     trends = {pid: t for pid, (_, t) in world.trends.items()}
-    candidates = analysis.sell_candidates(world.my_slots, buy_prices, trends)
+    return analysis.sell_candidates(world.my_slots, buy_prices, trends), buy_prices, trends
+
+
+def sell_candidates_report(world: World, store) -> str:
+    """Candidatos a poner a la venta según tendencia (ver `analysis.sell_candidates`): lleva
+    bajando 3 días, sea cual sea la pérdida acumulada. Los que ya están en venta se marcan
+    (siguen cumpliendo la regla, pero no hay nada que hacer con ellos)."""
+    candidates, buy_prices, trends = _sell_candidates(world, store)
     if not candidates:
         return ""
+    listed = {item.player.id for item in _my_listings(world)}
     cards = []
     for slot in candidates:
         p = slot.player
         buy = buy_prices[p.id]
         trend = trends[p.id]
         diff_pct = (p.market_value - buy) / buy * 100 if buy else 0
+        status = " · 📤 ya en venta" if p.id in listed else ""
         cards.append(
             f"{b(p.name)} · {m(buy)} → {m(p.market_value)} ({diff_pct:+.0f}%) · "
-            f"{i(analysis.trend_words(trend))}"
+            f"{i(analysis.trend_words(trend))}{status}"
         )
     head = f"{b('📉 Candidatos a vender')}\n{i('Tendencia bajando 3 días — no esperar a que caiga más')}"
     return head + "\n\n" + "\n".join(cards)
+
+
+def sell_keyboard(world: World, store) -> dict | None:
+    """Botón de vender (a valor de mercado) para cada candidato que aún no está en venta."""
+    candidates, _, _ = _sell_candidates(world, store)
+    listed = {item.player.id for item in _my_listings(world)}
+    return _keyboard([
+        _action_row(f"📤 Vender {sl.player.name} {m(sl.player.market_value)}", f"s:{sl.player.id}")
+        for sl in candidates
+        if sl.player.id not in listed and sl.player_team_id and sl.player.market_value
+    ])
+
+
+def my_listings_report(world: World) -> tuple[str, dict | None]:
+    """Tus jugadores puestos a la venta ahora, cada uno con su botón de retirarlo."""
+    listings = _my_listings(world)
+    if not listings:
+        return "", None
+    cards = [f"{b(item.player.name)} · pides {b(m(item.price))}" for item in listings]
+    head = f"{b('📤 En venta ahora')}\n{i('Ofertas del juego cada ciclo de las 21:00')}"
+    keyboard = _keyboard([
+        _action_row(f"↩️ Retirar {item.player.name}", f"w:{item.player.id}") for item in listings
+    ])
+    return head + "\n\n" + "\n".join(cards), keyboard
 
 
 def rivals_report(world: World, rival_cash: dict[str, int] | None = None) -> str:
@@ -735,16 +817,22 @@ def report_sections(
         (f"{b('⚽ Informe')}\n{i(stamp)}\n\n{lineup_report(world, news)}", None)
     ]
 
-    market_parts = [p for p in (market_report(world), investment_report(world), trends_report(world)) if p]
+    buy_parts = [p for p in (market_report(world), investment_report(world)) if p]
+    if buy_parts:
+        sections.append(("\n\n".join(buy_parts), buy_keyboard(world)))
+
+    mine_parts = [trends_report(world)]
+    sell_buttons = None
     if store is not None:
-        losing = losing_positions_report(world, store)
-        if losing:
-            market_parts.append(losing)
-        selling = sell_candidates_report(world, store)
-        if selling:
-            market_parts.append(selling)
-    if market_parts:
-        sections.append(("\n\n".join(market_parts), None))
+        mine_parts += [losing_positions_report(world, store), sell_candidates_report(world, store)]
+        sell_buttons = sell_keyboard(world, store)
+    mine_parts = [p for p in mine_parts if p]
+    if mine_parts:
+        sections.append(("\n\n".join(mine_parts), sell_buttons))
+
+    listings_text, listings_buttons = my_listings_report(world)
+    if listings_text:
+        sections.append((listings_text, listings_buttons))
 
     clause_messages, alerts = clauses_report(world, s, news)
     if alerts:

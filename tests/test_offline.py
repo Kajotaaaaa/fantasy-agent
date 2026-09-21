@@ -29,6 +29,7 @@ def squad(prefix, clause_lock=None, cheap_clause=False):
             value = 5_000_000 + n * 1_000_000
             clause = int(value * (1.1 if cheap_clause and n == 3 else 2.0))
             players.append({
+                "playerTeamId": f"pt-{prefix}{n}",
                 "playerMaster": pm(f"{prefix}{n}", f"{prefix}-J{n}", pos, value, 20 + n, 3 + n / 4),
                 "buyoutClause": clause,
                 "buyoutClauseLockedEndTime": clause_lock,
@@ -64,8 +65,11 @@ class FakeAPI:
 
     def market(self, lid):
         return [
-            {"playerMaster": pm("m1", "Chollo", 3, 10_000_000, 60, 7.5), "salePrice": 9_000_000,
+            {"id": "L100", "playerMaster": pm("m1", "Chollo", 3, 10_000_000, 60, 7.5), "salePrice": 9_000_000,
              "expirationDate": (NOW + timedelta(hours=10)).isoformat(), "numberOfBids": 1},
+            {"id": "L200", "playerMaster": pm("me3", "me-J3", 2, 8_000_000, 25, 3.75), "salePrice": 8_000_000,
+             "expirationDate": (NOW + timedelta(hours=10)).isoformat(),
+             "sellerTeam": {"manager": {"managerName": "Yo"}}},
             {"playerMaster": pm("m2", "Lesionado", 4, 20_000_000, 40, 5, status="injured"), "salePrice": 21_000_000,
              "expirationDate": (NOW + timedelta(hours=10)).isoformat()},
             {"playerMaster": pm("m3", "NoEsPujable", 3, 10_000_000, 90, 9), "salePrice": 9_500_000,
@@ -107,6 +111,28 @@ class Tests(unittest.TestCase):
         # Un jugador que "vende" otro entrenador de la liga no es pujable de verdad
         # (solo se consigue por cláusula) y no debe salir como oportunidad de mercado.
         self.assertNotIn("NoEsPujable", txt)
+
+    def test_action_buttons(self):
+        world = service.build_world(FakeAPI(), self.s)
+        codes = lambda kb: [row[0]["callback_data"] for row in kb["inline_keyboard"]] if kb else []  # noqa: E731
+
+        # Pujar: solo anuncios de LaLiga, nunca lo que vende otro mánager ni tus propios anuncios.
+        self.assertEqual(codes(service.market_keyboard(world)), ["b:L100"])
+        self.assertIn("Pujar Chollo", service.market_keyboard(world)["inline_keyboard"][0][0]["text"])
+
+        # Retirar: tu jugador puesto a la venta (me3, anuncio L200) lleva su botón.
+        text, kb = service.my_listings_report(world)
+        self.assertIn("me-J3", text)
+        self.assertEqual(codes(kb), ["w:me3"])
+
+        # Vender: candidato por tendencia a la baja con precio de compra conocido, salvo si ya
+        # está en venta (me3) — a ese solo se le marca "ya en venta".
+        store = Store(Path(tempfile.mkdtemp()) / "t.sqlite3")
+        store.set("buy_price:me3", "9000000")
+        store.set("buy_price:me4", "9000000")
+        self.assertEqual(codes(service.sell_keyboard(world, store)), ["s:me4"])
+        report = service.sell_candidates_report(world, store)
+        self.assertIn("ya en venta", report)
 
     def test_trend(self):
         hist = models.parse_value_history(history(10_000_000, 1.0))
