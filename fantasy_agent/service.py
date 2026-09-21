@@ -440,26 +440,28 @@ def sell_candidates_report(world: World, store) -> str:
 
 
 def rivals_report(world: World, rival_cash: dict[str, int] | None = None) -> str:
-    lines = [b("👥 Rivales")]
-    by_owner: dict[str, list[models.SquadSlot]] = {}
-    for sl in world.rival_slots:
-        by_owner.setdefault(sl.owner_team_id, []).append(sl)
+    """Solo el dinero de cada rival y si te puede pagar alguna cláusula tuya con lo que
+    tiene — nada de detalle de sus plantillas."""
     now = datetime.now(timezone.utc)
+    my_open_clauses = [sl.clause for sl in world.my_slots if sl.clause_open(now)]
+    cards = []
     for row in sorted(world.standing, key=lambda r: r.points, reverse=True):
-        cash_note = f" · saldo est. {m((rival_cash or {}).get(row.team_id))}" if rival_cash else ""
         if row.team_id == world.my_team_id:
-            lines.append(f"• {b('TÚ')} <i>({esc(row.manager_name)})</i>: {row.points} pts · valor {m(row.team_value)}")
             continue
-        slots = sorted(by_owner.get(row.team_id, []), key=lambda s: s.player.market_value, reverse=True)
-        top_names = esc(", ".join(s.player.name for s in slots[:3]))
-        open_cl = sum(1 for s in slots if s.clause_open(now))
-        lines.append(
-            f"• {b(row.manager_name)}: {row.points} pts · valor {m(row.team_value)}{cash_note} · "
-            f"cláusulas abiertas {open_cl} · top: {top_names}"
-        )
+        cash = (rival_cash or {}).get(row.team_id)
+        if cash is None:
+            cards.append(b(row.manager_name))
+            continue
+        threat = any(cash >= c for c in my_open_clauses)
+        icon = "✅" if threat else "❌"
+        note = "puede pagarte alguna cláusula" if threat else "no le llega para ninguna cláusula tuya"
+        cards.append(f"{b(row.manager_name)}\n{m(cash)}\n{icon} {i(note)}")
+    if not cards:
+        return f"{b('👥 Rivales')}\n{i('Sin rivales que mostrar.')}"
+    head = b("👥 Rivales")
     if rival_cash:
-        lines.append(i("Saldo estimado a partir del historial de fichajes — puede desviarse."))
-    return "\n".join(lines)
+        head += f"\n{i('Saldo estimado a partir del historial de fichajes')}"
+    return head + "\n\n" + "\n\n".join(cards)
 
 
 def estimate_rival_cash(api: FantasyAPI, world: World, max_pages: int = 20) -> dict[str, int]:
