@@ -57,6 +57,9 @@ def trend_words(t: "Trend") -> str:
     importa el ritmo de ahora mismo, no una media más lenta de toda la semana."""
     if abs(t.d3) < 0.5 and abs(t.d1) < 0.5:
         return "➖ estable estos días"
+    if t.d3 >= 1 and t.d1 < t.d3 / 6:
+        # Sigue subiendo, pero hoy va a menos de la mitad del ritmo de los últimos 3 días.
+        return f"🐢 se frena: hoy un {t.d1:.1f}%, un {t.d3:.1f}% en 3 días"
     if t.d3 >= 3:
         arrow = "🚀"
     elif t.d3 > 0:

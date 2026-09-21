@@ -18,6 +18,7 @@
 const PAYLOADS = {
   c: /^\d{1,12}$/,
   b: /^\d{1,12}(:\d{1,12})?$/,
+  u: /^\d{1,12}:\d{1,12}:\d{1,12}$/, // cambiar puja: "<anuncio>:<puja>:<cantidad>"
   s: /^\d{1,12}$/,
   w: /^\d{1,12}$/,
 };

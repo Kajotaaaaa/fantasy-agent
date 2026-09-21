@@ -71,8 +71,8 @@ def plan_bids(
     for item, trend in picks:
         if len(plan) >= MAX_NEW_PER_RUN or open_count + len(plan) >= MAX_OPEN:
             break
-        if item.player.id in busy_players or not item.listing_id:
-            continue
+        if item.player.id in busy_players or not item.listing_id or item.my_bid_id:
+            continue  # ya hay una puja tuya (la API la marca en el anuncio): no se toca
         amount = flip_amount(item, trend)
         if amount is None or amount > room or amount > cap / 2 or amount > cash_free:
             continue

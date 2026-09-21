@@ -280,7 +280,33 @@ def _act_withdraw(api, s, player_id: str) -> str:
     return f"✅ {service.b('Retirado del mercado')}\n{service.b(item.player.name)} ya no está a la venta."
 
 
-_ACTIONS = {"c": _act_clause, "b": _act_bid, "s": _act_sell, "w": _act_withdraw}
+def _act_update_bid(api, s, target: str) -> str:
+    """Cambia la cantidad de una puja pendiente ("<anuncio>:<puja>:<cantidad>"). Comprueba antes
+    que sigue siendo TU puja pendiente en ese anuncio (el id viaja en el botón, pero pudo
+    resolverse o cambiarse desde que se mandó) y aplica los mismos topes que `_act_bid`."""
+    listing_id, bid_id, raw_amount = (target.split(":") + ["", "", ""])[:3]
+    league_id, _, cash = service.resolve_league(api, s)
+    item = next((x for x in models.parse_market(api.market(league_id)) if x.listing_id == listing_id), None)
+    if not item:
+        raise RuntimeError("Ese anuncio ya no está en el mercado.")
+    if item.my_bid_id != bid_id:
+        raise RuntimeError("Esa puja ya no está pendiente (se resolvió o la cambiaste desde otro sitio).")
+    minimum = service.bid_amount(item)
+    amount = int(raw_amount)
+    if amount < minimum:
+        raise RuntimeError(f"{service.m(amount)} queda por debajo del mínimo válido ({service.m(minimum)}).")
+    if amount > minimum * 3:
+        raise RuntimeError(f"{service.m(amount)} es una cantidad sospechosa (más de 3x el mínimo); no la cambio.")
+    if cash is not None and amount > cash:
+        raise RuntimeError(f"No te llega el saldo ({service.m(cash)}) para pujar {service.m(amount)}.")
+    api.update_bid(league_id, item.listing_id, bid_id, amount)
+    return (
+        f"✅ {service.b('Puja cambiada')}\n{service.b(item.player.name)}: de {service.m(item.my_bid)} "
+        f"a {service.m(amount)}\n{service.i('Sigue pendiente hasta el cierre del mercado.')}"
+    )
+
+
+_ACTIONS = {"c": _act_clause, "b": _act_bid, "s": _act_sell, "w": _act_withdraw, "u": _act_update_bid}
 
 
 def cmd_execute_action(args, s) -> None:

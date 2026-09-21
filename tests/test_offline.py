@@ -142,6 +142,25 @@ class Tests(unittest.TestCase):
         report = service.sell_candidates_report(world, store)
         self.assertIn("ya en venta", report)
 
+    def test_pending_bid_changes_instead_of_new_bid(self):
+        from fantasy_agent import flip
+
+        raw = {"id": "L900", "playerMaster": pm("g1", "Ya pujado", 3, 10_000_000, 60, 7.5), "salePrice": 10_000_000,
+               "expirationDate": (NOW + timedelta(hours=10)).isoformat(),
+               "bid": {"id": "B77", "money": 10_500_000, "status": "pending"}}
+        item = models.parse_market([raw])[0]
+        self.assertEqual((item.my_bid_id, item.my_bid), ("B77", 10_500_000))
+        # Una puja ya resuelta no cuenta como pendiente.
+        done = dict(raw, bid={"id": "B78", "money": 1, "status": "won"})
+        self.assertEqual(models.parse_market([done])[0].my_bid_id, "")
+
+        world = service.build_world(FakeAPI(), self.s)
+        rows = service._bid_rows(world, item, analysis.Trend(0, 0, 0), False)
+        self.assertEqual([r[0]["callback_data"] for r in rows], ["u:L900:B77:10000000"])  # bajar al mínimo
+        self.assertIn("puja 10.50M → mínimo 10.00M", rows[0][0]["text"])
+        # El flipeo no toca un anuncio donde ya hay una puja tuya.
+        self.assertEqual(flip.plan_bids([(item, analysis.Trend(2.0, 4.0, 8.0))], 100_000_000, 0, [], set(), 0), [])
+
     def test_bid_plan(self):
         rising = analysis.Trend(2.0, 6.0, 12.0)
         plan = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.5, False)

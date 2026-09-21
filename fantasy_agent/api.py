@@ -97,6 +97,13 @@ class FantasyAPI:
         estado "pending", el dinero no baja al instante (se resuelve más tarde)."""
         return self._write("POST", f"{COMP}/league/{league_id}/market/{market_id}/bid", {"money": amount})
 
+    def update_bid(self, league_id: str, market_id: str, bid_id: str, amount: int) -> Any:
+        """Cambia la cantidad de una puja PENDIENTE tuya. Hallado con OPTIONS (`Allow: PUT`);
+        el cuerpo `{"money": cantidad}` es una suposición por analogía con la puja original,
+        SIN verificar todavía. Un segundo POST no vale: da 400 030.01.09 "Team has pending
+        bid in this player"."""
+        return self._write("PUT", f"{COMP}/league/{league_id}/market/{market_id}/bid/{bid_id}", {"money": amount})
+
     def pay_clause(self, league_id: str, player_team_id: str, amount: int) -> Any:
         """Paga la cláusula de un jugador de otro manager. IRREVERSIBLE, instantáneo.
         Verificado: usa el id del hueco de plantilla (`playerTeamId`), no el id del jugador."""

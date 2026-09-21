@@ -348,11 +348,25 @@ def _bid_rows(
         options.append(("📈", "margen", plan.margin))
     if plan.ceiling:
         options.append(("🎯", "techo", plan.ceiling))
+    affordable = [(icon, tag, amount) for icon, tag, amount in options if world.my_cash is None or amount <= world.my_cash]
+    if item.my_bid_id:
+        # Ya hay una puja tuya pendiente: un segundo POST da error (030.01.09), lo que se puede
+        # hacer es CAMBIAR su cantidad (PUT .../bid/{id}); código "u:<anuncio>:<puja>:<cantidad>".
+        return [
+            _action_row(
+                f"✏️ {item.player.name}: puja {m(item.my_bid)} → {tag} {m(amount)}",
+                f"u:{item.listing_id}:{item.my_bid_id}:{amount}",
+            )
+            for icon, tag, amount in affordable if amount != item.my_bid
+        ]
     return [
         _action_row(f"{icon} Pujar {item.player.name} · {tag} {m(amount)}", f"b:{item.listing_id}:{amount}")
-        for icon, tag, amount in options
-        if world.my_cash is None or amount <= world.my_cash
+        for icon, tag, amount in affordable
     ]
+
+
+def _my_bid_line(item: models.MarketItem) -> list[str]:
+    return [f"📌 Tu puja pendiente: {b(m(item.my_bid))}"] if item.my_bid_id else []
 
 
 def market_report(world: World, min_score: float = 8.0, rival_cash: dict[str, int] | None = None) -> str:
@@ -370,6 +384,7 @@ def market_report(world: World, min_score: float = 8.0, rival_cash: dict[str, in
             f"{star}{b(p.name)}  <i>{p.position} · {esc(p.team)}</i>",
             f"💰 Mínimo {b(m(plan.minimum))} · {p.avg_points:.1f} pts/partido",
             i(analysis.trend_words(trend)),
+            *_my_bid_line(item),
             *_plan_lines(plan),
             *_rivals_line(world, plan.minimum, rival_cash),
         ]))
@@ -400,6 +415,7 @@ def investment_report(world: World, top: int = 5, rival_cash: dict[str, int] | N
             f"{b(p.name)}  <i>{esc(p.team)}</i>",
             f"💰 Mínimo {b(m(plan.minimum))}",
             i(analysis.trend_words(t)),
+            *_my_bid_line(item),
             *_plan_lines(plan),
             *_rivals_line(world, plan.minimum, rival_cash),
         ]))

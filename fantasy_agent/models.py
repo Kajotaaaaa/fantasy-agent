@@ -192,12 +192,17 @@ class MarketItem:
     expires: datetime | None
     seller: str  # "LaLiga" si lo pone el juego; nombre del mánager si es de un rival
     bids: int
+    # Tu puja pendiente en este anuncio, si la hay: la API la incluye en el propio anuncio
+    # (`bid: {id, money, status}`) solo para ti; sin ella no se puede cambiar una puja.
+    my_bid_id: str = ""
+    my_bid: int = 0
 
 
 def parse_market(payload: Any) -> list[MarketItem]:
     items = []
     for item in as_list(payload, "market", "elements"):
         seller = pick(item, "sellerTeam.manager.managerName", "sellerTeam.name", default=None)
+        pending = pick(item, "bid.status", default="") == "pending"
         items.append(
             MarketItem(
                 listing_id=str(pick(item, "id", default="")),
@@ -206,6 +211,8 @@ def parse_market(payload: Any) -> list[MarketItem]:
                 expires=parse_dt(pick(item, "expirationDate", "expirationTime")),
                 seller=str(seller) if seller else "LaLiga",
                 bids=to_int(pick(item, "numberOfBids", "bidsCount", "offersCount")),
+                my_bid_id=str(pick(item, "bid.id", default="")) if pending else "",
+                my_bid=to_int(pick(item, "bid.money", default=0)) if pending else 0,
             )
         )
     return items

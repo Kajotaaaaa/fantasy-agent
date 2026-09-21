@@ -98,8 +98,16 @@ contra la liga real de producción:
   cuerpo — probablemente `{"money": cantidad}`), pero hace falta el `bid_id` que devuelve el
   POST original (`"id"` en la respuesta) y NO hay ninguna ruta para listar las pujas propias
   (probadas ~25 rutas, todas 404): ahora el flipeo lo guarda en `flip_pending` (`bid_id`) y el
-  aviso de puja por botón lo muestra. La puja de Pablo García (8.47M) se hizo sin guardarlo y
-  no se puede modificar.
+  aviso de puja por botón lo muestra.
+  **CORRECCIÓN (misma tarde): SÍ se pueden ver las pujas propias.** El anuncio del mercado trae
+  `bid: {id, money, status}` solo si tienes una puja pendiente (ej. `bid.id 36779292` en Pablo
+  García) y `numberOfBids` sube a 1; los anuncios sin puja tuya no llevan `bid`. Se parsea en
+  `MarketItem.my_bid_id/my_bid`. Con eso: (1) el flipeo no toca un anuncio con puja tuya, (2)
+  si ya pujaste, los botones ofrecen CAMBIAR la puja (`u:<anuncio>:<puja>:<cantidad>` ->
+  `api.update_bid`, PUT con `{"money": ...}` SIN verificar todavía) en vez de una puja nueva, y
+  la tarjeta pone "📌 Tu puja pendiente". No hay ruta para quitar una puja (el OPTIONS solo
+  admite PUT en `/bid/{id}`). La puja de Yuri que se creía hecha NO existe (sin `bid` en su
+  anuncio).
   **Cantidad**: no vale pujar siempre el precio pedido. Si el anuncio pide menos que el valor
   de mercado actual del jugador, el servidor responde 400 `030.01.01 "\"15207008\" is not a
   valid money quantity for this player"` (Yuri, 2026-09-21: pedía 15.21M, valía 15.52M; el
