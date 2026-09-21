@@ -227,7 +227,7 @@ def cmd_section(args, s) -> None:
     store = Store(s.db_file) if args.cmd in ("report", "losses", "sell-candidates", "market-news") else None
 
     rival_cash = {}
-    if args.cmd in ("rivals", "clause-risk"):
+    if args.cmd in ("rivals", "clause-risk", "advice"):
         rival_cash = service.estimate_rival_cash(api, world)
 
     if args.cmd == "report":
@@ -255,6 +255,7 @@ def cmd_section(args, s) -> None:
         "losses": lambda: service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.",
         "sell-candidates": lambda: service.sell_candidates_report(world, store) or "Nadie con tendencia bajando ahora mismo.",
         "market-news": lambda: service.market_arrivals_report(world, store) or "Nada nuevo desde el último estudio.",
+        "advice": lambda: service.daily_advice_report(world, rival_cash),
     }[args.cmd]()
     _out(s, text, args.telegram)
 
@@ -385,6 +386,7 @@ def main(argv: list[str] | None = None) -> None:
         ("losses", "Jugadores tuyos por debajo de lo que pagaste"),
         ("sell-candidates", "Candidatos a vender: tendencia bajando 3 días"),
         ("market-news", "Nuevo en el mercado desde el último estudio, con veredicto"),
+        ("advice", "Consejo táctico del día (capitán ya va dentro de 'lineup')"),
         ("report", "Informe completo"),
     ]:
         p = sub.add_parser(name, help=help_)

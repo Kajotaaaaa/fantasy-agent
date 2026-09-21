@@ -468,6 +468,32 @@ def clause_theft_report(world: World, rival_cash: dict[str, int]) -> str:
     return head + "\n\n" + "\n".join(cards)
 
 
+def daily_advice_report(world: World, rival_cash: dict[str, int] | None = None) -> str:
+    """Consejo táctico del día — un cierre con un solo paso concreto, priorizado por lo que
+    de verdad urge ahora mismo: primero si te pueden clausular algo importante, luego si
+    tienes dinero parado sin invertir, y si no hay nada urgente, un principio general de
+    estrategia de la comunidad (rota uno distinto cada día para no repetir)."""
+    tip = None
+    if rival_cash:
+        now = datetime.now(timezone.utc)
+        others_cash = {tid: cash for tid, cash in rival_cash.items() if tid != world.my_team_id}
+        risky = analysis.clause_theft_risk(world.my_slots, others_cash, now)
+        if risky:
+            slot, _ = max(risky, key=lambda r: r[0].player.avg_points)
+            tip = f"⚠️ Blinda a {b(slot.player.name)} en la app: con lo que tiene ahora, algún rival podría pagarte su cláusula."
+
+    if tip is None and world.my_cash:
+        squad_value = sum(sl.player.market_value for sl in world.my_slots) or 1
+        if world.my_cash / squad_value > 0.25:
+            tip = f"💰 Tienes {b(m(world.my_cash))} parados — dinero sin invertir no puntúa, busca un chollo o refuerza el once."
+
+    if tip is None:
+        day_index = datetime.now(timezone.utc).timetuple().tm_yday
+        tip = esc(analysis.STRATEGY_TIPS[day_index % len(analysis.STRATEGY_TIPS)])
+
+    return f"{b('🎓 Consejo del día')}\n{tip}"
+
+
 def ensure_clause_trends(api: FantasyAPI, world: World, s: Settings) -> None:
     """Pide histórico de valor solo para quien de verdad puede acabar en una alerta de
     cláusula (el filtro económico barato ya lo acota) — no para los 30+ rivales de la liga."""
@@ -656,6 +682,10 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
     now = datetime.now(timezone.utc)
     if world.next_jornada:
         head += f"\n🗓️ Empieza la jornada: {_fmt_when(world.next_jornada, now)}"
+    captain = analysis.pick_captain(eleven)
+    if captain:
+        motivo = "titular casi seguro" if captain.start_prob >= 0.75 else f"mejor opción disponible ({captain.start_prob:.0%} de jugar)"
+        head += f"\n🎽 Capitán recomendado: {b(captain.player.name)} — {i(motivo)}"
     lines = [head, ""]
     group_names = {1: "🧤 Portero", 2: "🛡️ Defensas", 3: "🎯 Centrocampistas", 4: "⚔️ Delanteros"}
     for pos_id in (1, 2, 3, 4):
@@ -711,6 +741,7 @@ def report_sections(
             sections.append(theft)
         sections.append(rivals_report(world, rival_cash))
 
+    sections.append(daily_advice_report(world, rival_cash))
     return sections
 
 

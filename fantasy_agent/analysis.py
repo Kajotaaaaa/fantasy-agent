@@ -458,7 +458,7 @@ def clause_alerts(
             continue
 
         stars, label, reasons = clause_verdict(p, slot.clause, ratio, trends.get(p.id), news.get(p.id))
-        stars_str = "★" * stars + "☆" * (4 - stars)
+        stars_str = "🟢" * stars + "⚪" * (4 - stars)
         detail = " · ".join(esc(r) for r in reasons)
         alerts.append(ClauseAlert(
             "open_affordable" if slot.clause_open(now) else "unlock_soon", slot,
@@ -741,3 +741,32 @@ def flip_decision(buy_price: int, offer_amount: int, days_held: int, trend: Tren
     if offer_amount >= buy_price:
         return "accept", f"Día {days_held}: cubre al menos lo pagado, asegurar antes de que empeore"
     return "wait", f"Día {days_held}: por debajo de lo pagado — esperar si aún hay margen, evitar vender en pérdida"
+
+
+# ---------- estrategia general (capitán y consejos) -------------------------
+# Principios recogidos de guías de comunidad (Comuniate, FútbolFantasy, JornadaPerfecta) sobre
+# el sistema de cláusulas de LaLiga Fantasy, no reglas propias inventadas. Se rotan uno al día
+# cuando no hay nada más urgente que decir (ver `service.daily_advice_report`).
+STRATEGY_TIPS = [
+    "No fiches por impulso: mira primero la tendencia de precio de los últimos días y si el calendario del jugador es favorable — esas dos cosas juntas son la apuesta razonable, no el nombre bonito.",
+    "No gastes todo el presupuesto pronto: cuanto más margen dejes, más rápido puedes reaccionar a un chollo o defenderte si te intentan pagar una cláusula.",
+    "Si un rival te clausula a alguien, no le devuelvas el golpe por rabia: piensa primero qué puede hacer él con ese dinero antes de pagarle una cláusula suya — a veces le estás haciendo un favor.",
+    "No blindes toda la plantilla: gasta la protección solo en tus 2-3 jugadores de verdad importantes y deja el resto como cebo — que un rival gaste de más clausulando a alguien sustituible.",
+    "Los parones de selecciones suelen traer el mercado al alza: si vas a especular comprando barato, esas fechas dan más margen para recuperar la inversión antes de revender.",
+    "Para el capitán prioriza minutos casi seguros y un rival flojo antes que el nombre más famoso del mercado: si falla, pierdes el doble de puntos, no solo los que no sumó.",
+    "Revisa el calendario de tus jugadores clave 2-3 jornadas por delante, no solo la próxima: un buen tramo de calendario vale más que acertar una sola jornada suelta.",
+    "No sobrevalores una posición por miedo a quedarte corto: la profundidad de talento no es igual en todas — un delantero suplente de un grande suele rendir más que un titular de un equipo flojo.",
+]
+
+
+def pick_captain(eleven: list[Candidate]) -> Candidate | None:
+    """A quién ponerle el brazalete (dobla los puntos, para bien y para mal): prioriza minutos
+    casi seguros (≥75% de probabilidad de titular) sobre puntos esperados en bruto — el riesgo
+    de un capitán que se queda en el banco pesa más que el techo de puntos de una apuesta
+    dudosa. Si nadie llega a ese umbral, el menos arriesgado disponible. Se descarta al portero
+    salvo que no quede otra opción: su puntuación apenas varía partido a partido (para bien),
+    así que doblarla no tiene el mismo techo que un jugador de ataque en buena racha."""
+    outfield = [c for c in eleven if c.player.position_id != 1] or eleven
+    sure = [c for c in outfield if c.start_prob >= 0.75]
+    pool = sure or outfield
+    return max(pool, key=lambda c: (c.xpts, c.start_prob))

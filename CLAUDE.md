@@ -157,10 +157,35 @@ aparente de cualquier cláusula pagada por encima de mercado.
 ## Tendencias: 7 días puede ser una racha ya muerta
 `analysis.Trend` compara el ritmo de 7 días contra el de 3: `cooling` = subió a 7d pero el
 corto plazo ya no lo confirma (racha vieja, no pagues de más por ella); `recovering` = al
-revés, cayó a 7d pero ya remonta. `label`, `project_value` (usa el ritmo de 3 días si detecta
+revés, cayó a 7d pero ya remonta. `project_value` (usa el ritmo de 3 días si detecta
 `cooling`/`recovering` en vez del de 7, que ya no describe el momento actual) y los veredictos
 (`clause_verdict`, `market_verdict`) usan esto en vez de mirar `d7` solo — evita decir "en
-racha" de un valor que ya se frenó.
+racha" de un valor que ya se frenó. El campo `d7` sigue calculándose y se usa como umbral
+interno (`cooling`/`recovering`, `sell_high_candidates`, el filtro de especulativas), pero ya
+no se muestra en ningún mensaje (pedido explícito del usuario: "a los 7 días no lo quiero, no
+me hace falta, queremos algo acotando más para ver si está para flipin"). Lo que se enseña es
+`analysis.trend_words(trend)`: una frase en palabras llanas con el ritmo al día y a 3 días.
+
+## Capitán y consejo del día (estrategia, no solo datos)
+Pedido explícito del usuario: que el bot aprenda táctica de verdad (no solo reporte datos) y
+aconseje a diario. Investigado por web (Comuniate, FútbolFantasy, JornadaPerfecta) en vez de
+inventado — son las mismas fuentes que ya salían citando este propio repo en los resultados.
+- El brazalete de capitán dobla los puntos de esa jornada (para bien y para mal). No hay
+  ningún campo de "capitán" en `/teams/{id}` (comprobado a mano contra la cuenta real): esto es
+  una recomendación de `analysis.pick_captain()`, el usuario lo aplica él mismo en la app — el
+  bot no manda ninguna escritura de alineación/capitán.
+- `pick_captain` prioriza minutos casi seguros (≥75% de titularidad) sobre puntos esperados en
+  bruto, y descarta al portero salvo que no quede otra opción: su puntuación varía poco
+  partido a partido (para bien), así que doblarla no tiene el mismo techo que un delantero o
+  centrocampista en buena racha — ningún manager de las guías consultadas recomienda capitán
+  portero salvo emergencia. Se muestra dentro de `lineup_report`, no como sección aparte.
+- `service.daily_advice_report` cierra el informe diario con un solo consejo, priorizado: si
+  hay riesgo real de que te clausulen algo importante (blindar en la app — no hay endpoint de
+  escritura para esto, solo se lee `shielded_until` de `SquadSlot`), avisa de eso primero; si
+  no, si tienes mucho dinero parado (>25% del valor de tu plantilla en cash sin invertir), avisa
+  de eso; si no hay nada urgente, rota uno de `analysis.STRATEGY_TIPS` (principios generales de
+  cláusulas/economía de las guías, uno distinto cada día por `día del año % len(...)`, para no
+  repetir el mismo consejo en cada informe).
 
 ## Formato de los mensajes
 Los informes se mandan a Telegram con `parse_mode=HTML` (`notify.send_telegram`). Helpers en
