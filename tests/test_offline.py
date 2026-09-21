@@ -185,6 +185,16 @@ class Tests(unittest.TestCase):
         self.assertIsNone(flip.flip_amount(listing(5, 10_000_000), analysis.Trend(0.5, 0.5, 9.0)))  # cooling
         self.assertIsNone(flip.flip_amount(listing(6, 11_000_000), rising))  # pide 10% sobre su valor
 
+    def test_can_bid(self):
+        m40 = analysis.CASH_UNCERTAINTY
+        self.assertEqual(analysis.can_bid(15_000_000, 15_000_000 + m40), "yes")
+        self.assertEqual(analysis.can_bid(15_000_000, 15_000_000), "maybe")
+        self.assertEqual(analysis.can_bid(15_000_000, 15_000_000 - m40), "maybe")
+        self.assertEqual(analysis.can_bid(15_000_000, 15_000_000 - m40 - 1), "no")
+        world = service.build_world(FakeAPI(), self.s)
+        line = service._rivals_line(world, 15_000_000, {"T1": 1, "T2": 100_000_000, "T3": -30_000_000})
+        self.assertIn("✅ 1 · ❔ 0 · ❌ 1", line[0])  # T1 (yo) no cuenta
+
     def test_trend(self):
         hist = models.parse_value_history(history(10_000_000, 1.0))
         t = analysis.trend_from_history(hist)

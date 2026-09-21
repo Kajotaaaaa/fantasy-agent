@@ -339,7 +339,7 @@ def cmd_section(args, s) -> None:
     store = Store(s.db_file) if args.cmd in ("report", "losses", "sell-candidates", "market-news", "listen") else None
 
     rival_cash = {}
-    if args.cmd in ("rivals", "clause-risk", "advice"):
+    if args.cmd in ("rivals", "clause-risk", "advice", "market"):
         rival_cash = service.estimate_rival_cash(api, world)
 
     if args.cmd == "report":
@@ -367,7 +367,7 @@ def cmd_section(args, s) -> None:
         return text or "No tienes a nadie a la venta ahora mismo.", buttons
 
     text, buttons = {
-        "market": lambda: (service.market_report(world), service.market_keyboard(world)),
+        "market": lambda: (service.market_report(world, rival_cash=rival_cash), service.market_keyboard(world)),
         "trends": lambda: (service.trends_report(world), None),
         "rivals": lambda: (service.rivals_report(world, rival_cash), None),
         "clause-risk": lambda: (

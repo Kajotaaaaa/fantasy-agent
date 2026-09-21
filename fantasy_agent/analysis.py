@@ -734,6 +734,24 @@ def estimate_cash(events: list[Activity], my_manager_id: str, my_cash: int, mana
     return {team_id: implied_start + reconstruct_cash_flow(events, mgr_id) for team_id, mgr_id in manager_ids.items()}
 
 
+# Margen de error del saldo estimado. Medido (2026-09-21) con el historial completo de la liga:
+# con el presupuesto inicial que sale de calibrar contra TU saldo real (57.1M), el saldo de los
+# 6 mánagers —tú incluido— cae por debajo de cero en algún momento (hasta -70M), y no puede ser:
+# faltan movimientos de dinero en el historial que no sabemos cuáles son. Como mínimo ~40M.
+CASH_UNCERTAINTY = 40_000_000
+
+
+def can_bid(price: int, estimated_cash: int, margin: int = CASH_UNCERTAINTY) -> str:
+    """¿Puede un rival pujar `price`? "yes" solo si le sobra incluso restando el margen de
+    error del saldo estimado, "no" si no le llegaría ni sumándolo, "maybe" en medio (que con
+    pujas baratas es casi siempre: el margen es grande comparado con ellas)."""
+    if estimated_cash >= price + margin:
+        return "yes"
+    if estimated_cash >= price - margin:
+        return "maybe"
+    return "no"
+
+
 def clause_theft_risk(
     my_slots: list[SquadSlot],
     rival_cash: dict[str, int],

@@ -306,6 +306,20 @@ def _plan_for(
     return analysis.bid_plan(bid_amount(item), p.market_value, trend, p.avg_points, benchmark, is_top)
 
 
+def _rivals_line(world: World, price: int, rival_cash: dict[str, int] | None) -> list[str]:
+    """Cuántos rivales podrían pujar tanto como `price`, según su saldo estimado (con el
+    margen de error de `analysis.CASH_UNCERTAINTY`: "seguro" solo si les sobra aun restándolo)."""
+    if not rival_cash:
+        return []
+    verdicts = [
+        analysis.can_bid(price, cash) for team_id, cash in rival_cash.items() if team_id != world.my_team_id
+    ]
+    if not verdicts:
+        return []
+    yes, maybe, no = verdicts.count("yes"), verdicts.count("maybe"), verdicts.count("no")
+    return [i(f"👥 Rivales que pueden pujar: ✅ {yes} · ❔ {maybe} · ❌ {no} (seguro · dudoso · no; saldo estimado ±40M)")]
+
+
 def _plan_lines(plan: analysis.BidPlan) -> list[str]:
     lines = []
     if plan.margin:
@@ -340,7 +354,7 @@ def _bid_rows(
     ]
 
 
-def market_report(world: World, min_score: float = 8.0) -> str:
+def market_report(world: World, min_score: float = 8.0, rival_cash: dict[str, int] | None = None) -> str:
     """Fichajes deportivos para tu once. Un TOP de la liga sale siempre, aunque su score sea
     bajo por precio: no es una cuestión de "compensa el precio", es que es de los mejores del
     campeonato en su puesto y te lo estás perdiendo si no lo ves. Lleva también su lado
@@ -356,6 +370,7 @@ def market_report(world: World, min_score: float = 8.0) -> str:
             f"💰 Mínimo {b(m(plan.minimum))} · {p.avg_points:.1f} pts/partido",
             i(analysis.trend_words(trend)),
             *_plan_lines(plan),
+            *_rivals_line(world, plan.minimum, rival_cash),
         ]))
     if not cards:
         return ""
@@ -370,7 +385,7 @@ def market_keyboard(world: World, min_score: float = 8.0) -> dict | None:
     ])
 
 
-def investment_report(world: World, top: int = 5) -> str:
+def investment_report(world: World, top: int = 5, rival_cash: dict[str, int] | None = None) -> str:
     """Comprar barato y revender. Los TOP de la liga NO entran aquí: a esos los quieres
     para tu equipo, no para venderlos en 14 días."""
     picks = _investment_picks(world, top)
@@ -385,6 +400,7 @@ def investment_report(world: World, top: int = 5) -> str:
             f"💰 Mínimo {b(m(plan.minimum))}",
             i(analysis.trend_words(t)),
             *_plan_lines(plan),
+            *_rivals_line(world, plan.minimum, rival_cash),
         ]))
     head = f"{b('💹 Oportunidades de inversión')}\n{i('Comprar y revender, no para tu once')}"
     return head + "\n\n" + "\n\n".join(cards)
@@ -604,7 +620,7 @@ def rivals_report(world: World, rival_cash: dict[str, int] | None = None) -> str
         return f"{b('👥 Rivales')}\n{i('Sin rivales que mostrar.')}"
     head = b("👥 Rivales")
     if rival_cash:
-        head += f"\n{i('Saldo estimado a partir del historial de fichajes')}"
+        head += f"\n{i('Saldo estimado del historial de movimientos — orientativo, margen ±40M')}"
     return head + "\n\n" + "\n".join(cards)
 
 
@@ -919,7 +935,7 @@ def report_sections(
         (f"{b('⚽ Informe')}\n{i(stamp)}\n\n{lineup_report(world, news)}", None)
     ]
 
-    buy_parts = [p for p in (market_report(world), investment_report(world)) if p]
+    buy_parts = [p for p in (market_report(world, rival_cash=rival_cash), investment_report(world, rival_cash=rival_cash)) if p]
     if buy_parts:
         sections.append(("\n\n".join(buy_parts), buy_keyboard(world)))
 

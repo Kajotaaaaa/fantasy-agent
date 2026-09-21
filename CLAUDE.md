@@ -170,6 +170,23 @@ jugadores con la cláusula pagable ahora, qué rivales tienen saldo estimado suf
 pagarla (excluye tu propio team_id explícitamente — si no, aparecías como "amenaza" de ti
 mismo).
 
+**Fiabilidad medida (2026-09-21) — baja en valor absoluto:**
+- El historial está completo (3 páginas, 461 eventos, desde el 04/08, ids sin duplicar) y los
+  importes de los eventos son cifras de dinero reales: la cláusula de Yoel Lago (12.550.633)
+  coincide EXACTAMENTE con lo que bajó mi saldo (153.144.766 → 140.594.133).
+- El blindaje no cuesta dinero (importe 0 en el feed y es gratuito en el juego oficial): no falta
+  nada por ahí. `teamMoney` de los rivales es `null` tanto en `standing` como en `teams/{id}`.
+- PERO calibrando contra tu saldo real el presupuesto inicial sale 57.140.754 (nada redondo) y,
+  con ese inicio, el saldo de los 6 mánagers —tú incluido— baja de cero en algún momento (hasta
+  -70M), lo que no puede ser. Con saldo siempre ≥ 0 el inicio mínimo para ti sería 96.5M, o sea
+  faltan al menos ~40M de movimientos en el historial que no sabemos cuáles son. Por eso el
+  saldo estimado es ORIENTATIVO: `analysis.CASH_UNCERTAINTY` = 40M de margen, y
+  `analysis.can_bid` clasifica seguro / dudoso / no (con pujas baratas casi todo es "dudoso").
+- Cómo validarlo mejor: comparar saldo real antes/después de un evento de compra/venta a
+  LaLiga (tipos 31/33) — hasta ahora solo está comprobado el de cláusula (tipo 1). Los
+  cierres del mercado (21:02) y las ventas dan esa comparación exacta.
+- Uso: `market`/informe diario añaden "Rivales que pueden pujar: ✅ · ❔ · ❌" a cada fichaje.
+
 ## Cláusulas especulativas (caras pero con racha fuerte y sostenida)
 `analysis.speculative_clause_candidates`/`speculative_clause_verdict`/`speculative_clause_alerts`
 (`service.speculative_clauses_report`, comando `clauses-hot`): cláusulas que NO pasan el filtro
