@@ -454,14 +454,14 @@ def rivals_report(world: World, rival_cash: dict[str, int] | None = None) -> str
             continue
         threat = any(cash >= c for c in my_open_clauses)
         icon = "✅" if threat else "❌"
-        note = "puede pagarte alguna cláusula" if threat else "no le llega para ninguna cláusula tuya"
-        cards.append(f"{b(row.manager_name)}\n{m(cash)}\n{icon} {i(note)}")
+        note = "puede clausularte" if threat else "no le llega"
+        cards.append(f"{b(row.manager_name)} · {m(cash)} · {icon} {i(note)}")
     if not cards:
         return f"{b('👥 Rivales')}\n{i('Sin rivales que mostrar.')}"
     head = b("👥 Rivales")
     if rival_cash:
         head += f"\n{i('Saldo estimado a partir del historial de fichajes')}"
-    return head + "\n\n" + "\n\n".join(cards)
+    return head + "\n\n" + "\n".join(cards)
 
 
 def estimate_rival_cash(api: FantasyAPI, world: World, max_pages: int = 20) -> dict[str, int]:
