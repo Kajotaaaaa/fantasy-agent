@@ -10,7 +10,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from . import auth, flip, models, notify, service
+from . import auth, flip, models, notify, service, snipe
 from .api import FantasyAPI
 from .attendance import estimate_titularidad
 from .config import load_settings
@@ -344,6 +344,13 @@ def cmd_flip(args, s) -> None:
     print(note or "Sin candidatos que cumplan las reglas ahora mismo.")
 
 
+def cmd_snipe(args, s) -> None:
+    """Rebaja de último segundo (ver snipe.py). `SNIPE_MODE=on` baja de verdad; por defecto solo
+    cuenta lo que haría. `--close-in N` simula un cierre dentro de N segundos, para probarlo."""
+    mode = (os.environ.get("SNIPE_MODE") or "shadow").strip().lower()
+    snipe.send(FantasyAPI(s), s, mode, close_in=args.close_in)
+
+
 def cmd_set_webhook(args, s) -> None:
     """Una sola vez tras desplegar el Worker: le dice a Telegram a dónde mandar los botones."""
     print(json.dumps(notify.set_webhook(s, args.url, args.secret), ensure_ascii=False))
@@ -622,6 +629,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("player_id", help="id del jugador (el tuyo, puesto a la venta)")
     p.add_argument("--confirm", action="store_true", help="ejecuta de verdad; sin esto solo es vista previa")
     p.set_defaults(func=cmd_withdraw)
+
+    p = sub.add_parser("snipe", help="Rebaja de último segundo de tus pujas si eres el único que puja")
+    p.add_argument("--close-in", type=float, default=None, help="solo pruebas: cierre ficticio en N segundos")
+    p.set_defaults(func=cmd_snipe)
 
     sub.add_parser("flip", help="Prueba del flipeo en modo sombra: qué pujaría ahora (no ejecuta nada)").set_defaults(func=cmd_flip)
 

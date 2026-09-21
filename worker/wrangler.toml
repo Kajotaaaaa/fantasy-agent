@@ -1,3 +1,9 @@
 name = "fantasy-agent-telegram"
 main = "telegram-webhook.js"
 compatibility_date = "2025-01-01"
+
+# 20:56 hora de España, una vez con horario de verano (UTC+2 -> 18:56 UTC) y otra con el de
+# invierno (UTC+1 -> 19:56 UTC). La que no toca la descarta el propio trabajo (snipe.py sale si
+# no hay ningún cierre de mercado en los próximos 15 minutos).
+[triggers]
+crons = ["56 18 * * *", "56 19 * * *"]

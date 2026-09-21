@@ -161,6 +161,30 @@ class Tests(unittest.TestCase):
         # El flipeo no toca un anuncio donde ya hay una puja tuya.
         self.assertEqual(flip.plan_bids([(item, analysis.Trend(2.0, 4.0, 8.0))], 100_000_000, 0, [], set(), 0), [])
 
+    def test_snipe_plan(self):
+        from fantasy_agent import snipe
+
+        def listing(n, bids, my_bid, price=10_000_000, seller=None):
+            raw = {"id": f"S{n}", "playerMaster": pm(f"s{n}", f"Snipe{n}", 3, 10_000_000, 60, 7.5), "salePrice": price,
+                   "expirationDate": (NOW + timedelta(minutes=2)).isoformat(), "numberOfBids": bids}
+            if my_bid:
+                raw["bid"] = {"id": f"B{n}", "money": my_bid, "status": "pending"}
+            if seller:
+                raw["sellerTeam"] = {"manager": {"managerName": seller}}
+            return models.parse_market([raw])[0]
+
+        items = [
+            listing(1, 1, 11_000_000),                 # solo yo, por encima del mínimo -> bajar a 10M
+            listing(2, 2, 11_000_000),                 # alguien más pujó -> no tocar
+            listing(3, 1, 10_000_000),                 # solo yo, ya en el mínimo -> nada
+            listing(4, 0, 0),                          # sin pujas mías
+            listing(5, 1, 12_000_000, seller="Pepe"),  # no es de LaLiga
+        ]
+        plan = snipe.plan_reductions(items)
+        self.assertEqual([(it.listing_id, amount) for it, amount in plan], [("S1", 10_000_000)])
+        # El cierre real es 2 minutos antes del expirationDate (21:00 vs 21:02).
+        self.assertEqual(snipe.close_time(items[0]), items[0].expires - timedelta(minutes=2))
+
     def test_bid_plan(self):
         rising = analysis.Trend(2.0, 6.0, 12.0)
         plan = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.5, False)

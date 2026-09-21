@@ -16,6 +16,25 @@ aparecen los resultados y el mercado nuevo, unos minutos DESPUÉS del cierre rea
 estudio del mercado nuevo va a las 21:05). Cualquier cosa que actúe sobre una puja "en el
 último momento" debe terminar antes de las 21:00:00, no de las 21:02.
 
+## Rebaja de último segundo (`snipe.py`)
+Idea del usuario: si al final de la subasta eres el ÚNICO que ha pujado, no hace falta pagar
+más que el mínimo válido. El anuncio trae `numberOfBids` y tu `bid`: con `numberOfBids == 1` y
+tu puja, nadie más compite. Solo BAJA (`api.update_bid`), nunca sube: no puede hacerte gastar
+más; riesgo = que alguien puje en el último segundo tras la lectura.
+- Cadena: cron del Worker de Cloudflare (`wrangler.toml`, 20:56 hora de España, dos crons por
+  el cambio de hora; puntual al minuto, el cron de GitHub se retrasa minutos) -> `repository_dispatch`
+  `fantasy-snipe` -> `.github/workflows/snipe.yml` -> `python -m fantasy_agent snipe`: espera
+  hasta T-10s del cierre (`expirationDate - 2 min`, ver "Cierre de las pujas"), lee el mercado
+  y baja lo que corresponda; usa la hora del servidor (cabecera `Date`), no la del runner. Si el
+  próximo cierre está a más de 15 min, sale sin hacer nada (el cron que no toca por horario).
+- `SNIPE_MODE` (variable del repositorio): `on` baja de verdad; vacío/otro = SOMBRA (por
+  defecto): solo cuenta lo que haría. Además toma lecturas a T-30s, T-10s, T-3s, T+15s y T+90s
+  y las manda por Telegram: sirve para confirmar (1) que `numberOfBids` cuenta también las
+  pujas de los rivales (a las 17:00 del 21/09 solo existía la mía) y (2) a qué hora cierra de
+  verdad (¿los anuncios cambian a las 21:00:00 o siguen abiertos hasta las 21:02?).
+- Primera noche (21/09): solo sombra. Activarlo de verdad = crear `SNIPE_MODE=on`.
+- Prueba local: `python -m fantasy_agent snipe --close-in 40` (cierre ficticio; en sombra).
+
 ## Flipeo autónomo (`flip.py`) — la única parte que mueve dinero sin confirmar
 Decisión explícita del usuario (2026-09-21): flipeo autónomo, real desde el primer día, tope del
 25% del saldo. Interruptor `FLIP_MODE` (variable del repositorio en GitHub: Settings > Secrets

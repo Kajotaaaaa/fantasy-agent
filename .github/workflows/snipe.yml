@@ -1,0 +1,64 @@
+name: fantasy-snipe
+
+# Rebaja de último segundo (fantasy_agent/snipe.py). Lo dispara el cron del Worker de
+# Cloudflare a las 20:56 hora de España (repository_dispatch); el trabajo espera hasta 10 s
+# antes del cierre de las 21:00 (~5-6 min), así que sin grupo de concurrencia ni caché propia.
+# `workflow_dispatch` para lanzarlo a mano. SNIPE_MODE (variable del repositorio): `on` baja
+# de verdad; sin ella (o cualquier otra cosa) va en SOMBRA y solo cuenta lo que haría.
+on:
+  repository_dispatch:
+    types: [fantasy-snipe]
+  workflow_dispatch: {}
+
+jobs:
+  snipe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restaurar sesión
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: fantasy-state-${{ github.run_id }}
+          restore-keys: |
+            fantasy-state-
+
+      - name: Sembrar sesión inicial si no hay caché todavía
+        run: |
+          mkdir -p data
+          if [ ! -s data/tokens.json ] && [ -n "$FANTASY_TOKENS_JSON" ]; then
+            echo "$FANTASY_TOKENS_JSON" > data/tokens.json
+          fi
+        env:
+          FANTASY_TOKENS_JSON: ${{ secrets.FANTASY_TOKENS_JSON }}
+
+      - name: Huella de la sesión antes
+        id: before
+        run: echo "hash=$(sha256sum data/tokens.json 2>/dev/null | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: fantasy snipe
+        run: python -m fantasy_agent snipe
+        env:
+          SNIPE_MODE: ${{ vars.SNIPE_MODE }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FANTASY_LEAGUE_ID: ${{ secrets.FANTASY_LEAGUE_ID }}
+          FANTASY_TEAM_ID: ${{ secrets.FANTASY_TEAM_ID }}
+
+      - name: Huella de la sesión después
+        id: after
+        if: always()
+        run: echo "hash=$(sha256sum data/tokens.json 2>/dev/null | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Guardar estado actualizado (solo si la sesión cambió)
+        if: always() && steps.before.outputs.hash != steps.after.outputs.hash
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: fantasy-state-${{ github.run_id }}

@@ -31,7 +31,25 @@ const tg = (env, method, body) =>
     body: JSON.stringify(body),
   });
 
+const dispatch = (env, event_type, client_payload) =>
+  fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/dispatches`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${env.GITHUB_TOKEN}`,
+      accept: "application/vnd.github+json",
+      "user-agent": "fantasy-agent-worker",
+      "x-github-api-version": "2022-11-28",
+    },
+    body: JSON.stringify({ event_type, client_payload }),
+  });
+
 export default {
+  // Cron (wrangler.toml): a las 20:56 hora de España lanza la rebaja de último segundo
+  // (workflow snipe.yml). El cron de GitHub se retrasa minutos; el de Cloudflare es puntual.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(dispatch(env, "fantasy-snipe", {}));
+  },
+
   async fetch(request, env) {
     if (request.method !== "POST") return new Response("ok");
     if (request.headers.get("x-telegram-bot-api-secret-token") !== env.TELEGRAM_WEBHOOK_SECRET) {
@@ -119,16 +137,7 @@ export default {
     }
     await answer("Ejecutando…");
     await setKeyboard(withoutCancel.filter((row) => !hasCode(row, confirmCode)));
-    const res = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/dispatches`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${env.GITHUB_TOKEN}`,
-        accept: "application/vnd.github+json",
-        "user-agent": "fantasy-agent-worker",
-        "x-github-api-version": "2022-11-28",
-      },
-      body: JSON.stringify({ event_type: "fantasy-action", client_payload: { action: code } }),
-    });
+    const res = await dispatch(env, "fantasy-action", { action: code });
     if (!res.ok) {
       await setKeyboard([
         ...withoutCancel.filter((row) => !hasCode(row, confirmCode)),
