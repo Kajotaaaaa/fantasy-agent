@@ -1,8 +1,9 @@
 // Cloudflare Worker: recibe las pulsaciones de botones de Telegram (webhook) y, tras una
 // segunda confirmación, dispara el workflow de GitHub Actions que ejecuta la acción real.
 //
-// Cada botón lleva un código en callback_data: "<verbo>:<id>" con verbo c (pagar cláusula),
-// b (pujar), s (vender) o w (retirar de la venta). Un mensaje puede tener varias filas de
+// Cada botón lleva un código en callback_data: "<verbo>:<payload>" con verbo c (pagar
+// cláusula), b (pujar; payload "<anuncio>:<cantidad>"), s (vender) o w (retirar de la venta).
+// Un mensaje puede tener varias filas de
 // botones (una por jugador); el estado de cada fila se lleva en el propio teclado, sin base
 // de datos:
 //   "b:<id>"     botón original          -> la fila pasa a "✅ Confirmar · <etiqueta>" + "❌ Cancelar"
@@ -12,8 +13,14 @@
 // Secretos (npx wrangler secret put <NOMBRE>):
 //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET, GITHUB_TOKEN, GITHUB_REPO
 
-const VERBS = new Set(["c", "b", "s", "w"]);
-const VALID_ID = /^\d{1,12}$/;
+// Cada verbo con el formato de su payload: la puja lleva "<anuncio>:<cantidad>" (la cantidad
+// exacta que enseña el botón); el resto, solo un id.
+const PAYLOADS = {
+  c: /^\d{1,12}$/,
+  b: /^\d{1,12}(:\d{1,12})?$/,
+  s: /^\d{1,12}$/,
+  w: /^\d{1,12}$/,
+};
 const CONFIRM_PREFIX = "✅ Confirmar · ";
 
 const tg = (env, method, body) =>
@@ -59,7 +66,7 @@ export default {
     const [rawVerb, ...rest] = cancelled ? parts.slice(1) : parts;
     const payload = rest.join(":");
     const verb = (rawVerb || "").toLowerCase();
-    if (!VERBS.has(verb) || !VALID_ID.test(payload)) {
+    if (!PAYLOADS[verb] || !PAYLOADS[verb].test(payload)) {
       await answer("Acción no válida", true);
       return new Response("ok");
     }

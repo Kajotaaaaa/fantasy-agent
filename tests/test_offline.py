@@ -117,10 +117,16 @@ class Tests(unittest.TestCase):
         codes = lambda kb: [row[0]["callback_data"] for row in kb["inline_keyboard"]] if kb else []  # noqa: E731
 
         # Pujar: solo anuncios de LaLiga, nunca lo que vende otro mánager ni tus propios anuncios.
-        self.assertEqual(codes(service.market_keyboard(world)), ["b:L100"])
-        # Chollo pide 9M pero vale 10M: se puja el mayor (el servidor rechaza pujar por debajo
-        # del valor de mercado, error 030.01.01) y el botón enseña la cantidad real.
-        self.assertIn("Pujar Chollo 10.00M", service.market_keyboard(world)["inline_keyboard"][0][0]["text"])
+        # Chollo pide 9M pero vale 10M: el mínimo es el mayor (el servidor rechaza pujar por
+        # debajo del valor de mercado, error 030.01.01) y el botón enseña la cantidad real. Al
+        # subir un 2%/día lleva también puja con margen, y por puntos (7.5 de media) un techo.
+        kb = codes(service.market_keyboard(world))
+        self.assertEqual(kb[0], "b:L100:10000000")
+        self.assertTrue(all(c.startswith("b:L100:") for c in kb))
+        self.assertGreater(len(kb), 1)
+        amounts = [int(c.split(":")[2]) for c in kb]
+        self.assertEqual(amounts, sorted(amounts))
+        self.assertIn("Pujar Chollo · mínimo 10.00M", service.market_keyboard(world)["inline_keyboard"][0][0]["text"])
 
         # Retirar: tu jugador puesto a la venta (me3, anuncio L200) lleva su botón.
         text, kb = service.my_listings_report(world)
@@ -135,6 +141,22 @@ class Tests(unittest.TestCase):
         self.assertEqual(codes(service.sell_keyboard(world, store)), ["s:me4"])
         report = service.sell_candidates_report(world, store)
         self.assertIn("ya en venta", report)
+
+    def test_bid_plan(self):
+        rising = analysis.Trend(2.0, 6.0, 12.0)
+        plan = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.5, False)
+        self.assertEqual(plan.expected, 10_600_000)
+        self.assertEqual(plan.margin, 10_300_000)  # mínimo + la mitad de la ganancia esperada
+        self.assertEqual(plan.ceiling, 15_000_000)  # 7.5 pts / 0.5 pts-por-M
+        # Sin subida no hay margen que justificar; sin referencia de mercado, ni techo.
+        flat = analysis.bid_plan(10_000_000, 10_000_000, analysis.Trend(0, 0, 0), 7.5, 0, False)
+        self.assertEqual((flat.margin, flat.expected, flat.ceiling), (None, None, None))
+        # Un techo que no supera la puja anterior no aporta nada.
+        low = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.74, False)
+        self.assertIsNone(low.ceiling)
+        # Y nunca pasa del doble del mínimo, aunque los puntos "digan" mucho más.
+        cheap = analysis.bid_plan(1_000_000, 1_000_000, analysis.Trend(0, 0, 0), 3.5, 0.29, False)
+        self.assertEqual(cheap.ceiling, 2_000_000)
 
     def test_trend(self):
         hist = models.parse_value_history(history(10_000_000, 1.0))

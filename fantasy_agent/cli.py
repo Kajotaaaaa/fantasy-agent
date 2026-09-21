@@ -225,16 +225,23 @@ def _act_clause(api, s, player_id: str) -> str:
     return f"✅ {service.b('Cláusula pagada')}\n{service.b(fresh_slot.player.name)} por {service.m(fresh_slot.clause)}"
 
 
-def _act_bid(api, s, listing_id: str) -> str:
-    """Puja la cantidad mínima válida (`service.bid_amount`, la que enseña el botón). Sin techo
-    propio. Nunca por encima del saldo — regla del usuario, prohibido quedarse en negativo."""
+def _act_bid(api, s, target: str) -> str:
+    """Puja la cantidad del botón ("<anuncio>:<cantidad>"; sin cantidad, el mínimo válido de
+    `service.bid_amount`). Nunca por debajo del mínimo (el servidor lo rechaza), ni por encima
+    del saldo (regla del usuario: prohibido quedarse en negativo), ni una cantidad absurda."""
+    listing_id, _, raw_amount = target.partition(":")
     league_id, _, cash = service.resolve_league(api, s)
     item = next((x for x in models.parse_market(api.market(league_id)) if x.listing_id == listing_id), None)
     if not item:
         raise RuntimeError("Ese anuncio ya no está en el mercado.")
     if item.seller != "LaLiga":
         raise RuntimeError("Solo se puede pujar por anuncios de LaLiga.")
-    amount = service.bid_amount(item)
+    minimum = service.bid_amount(item)
+    amount = int(raw_amount) if raw_amount else minimum
+    if amount < minimum:
+        raise RuntimeError(f"{service.m(amount)} queda por debajo del mínimo válido ({service.m(minimum)}).")
+    if amount > minimum * 3:
+        raise RuntimeError(f"{service.m(amount)} es una cantidad sospechosa (más de 3x el mínimo); no pujo.")
     if cash is not None and amount > cash:
         raise RuntimeError(f"No te llega el saldo ({service.m(cash)}) para pujar {service.m(amount)}.")
     api.bid(league_id, item.listing_id, amount)

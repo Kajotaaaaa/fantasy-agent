@@ -209,7 +209,7 @@ def position_ppm_benchmark(world: World, position_id: int, exclude_id: str | Non
         if not item.player.avg_points or item.price <= 0:
             continue
         ppms.append(item.player.avg_points / (item.price / 1_000_000))
-    if not ppms:
+    if len(ppms) < 3:  # con menos referencias la mediana no significa nada
         return 0.0
     ppms.sort()
     mid = len(ppms) // 2
@@ -296,8 +296,48 @@ def bid_amount(item: models.MarketItem) -> int:
     return max(item.price, item.player.market_value or 0)
 
 
-def _bid_row(item: models.MarketItem) -> list[dict]:
-    return _action_row(f"💰 Pujar {item.player.name} {m(bid_amount(item))}", f"b:{item.listing_id}")
+def _plan_for(
+    world: World, item: models.MarketItem, trend: analysis.Trend, is_top: bool, with_ceiling: bool = True,
+) -> analysis.BidPlan:
+    """Las tres pujas posibles de un anuncio (ver `analysis.bid_plan`). El techo por puntos solo
+    tiene sentido para fichajes de tu once, no para flipeo (`with_ceiling=False`)."""
+    p = item.player
+    benchmark = position_ppm_benchmark(world, p.position_id, exclude_id=p.id) if with_ceiling else 0.0
+    return analysis.bid_plan(bid_amount(item), p.market_value, trend, p.avg_points, benchmark, is_top)
+
+
+def _plan_lines(plan: analysis.BidPlan) -> list[str]:
+    lines = []
+    if plan.margin:
+        lines.append(
+            f"📈 Con margen: {b(m(plan.margin))} · se espera ~{m(plan.expected)} en 3 días, "
+            "te quedas la mitad de la ganancia"
+        )
+    if plan.ceiling:
+        lines.append(f"🎯 Si lo quieres sí o sí: hasta {b(m(plan.ceiling))} · más allá, mejor la alternativa del mercado")
+    return lines
+
+
+def _bid_rows(
+    world: World, item: models.MarketItem, trend: analysis.Trend, is_top: bool, with_ceiling: bool = True,
+) -> list[list[dict]]:
+    """Una fila de botón por cada puja posible (mínimo / con margen / techo). La cantidad viaja
+    en el propio código ("b:<anuncio>:<cantidad>"): lo que confirmas es exactamente lo que se
+    puja, aunque la tendencia cambie entre que se manda el aviso y pulsas. Nunca ofrece una
+    puja que no te llega de saldo (regla del usuario: prohibido quedarse en negativo)."""
+    if not item.listing_id:
+        return []
+    plan = _plan_for(world, item, trend, is_top, with_ceiling)
+    options = [("💰", "mínimo", plan.minimum)]
+    if plan.margin:
+        options.append(("📈", "margen", plan.margin))
+    if plan.ceiling:
+        options.append(("🎯", "techo", plan.ceiling))
+    return [
+        _action_row(f"{icon} Pujar {item.player.name} · {tag} {m(amount)}", f"b:{item.listing_id}:{amount}")
+        for icon, tag, amount in options
+        if world.my_cash is None or amount <= world.my_cash
+    ]
 
 
 def market_report(world: World, min_score: float = 8.0) -> str:
@@ -310,11 +350,13 @@ def market_report(world: World, min_score: float = 8.0) -> str:
     for item, trend, is_top in _market_picks(world, min_score):
         p = item.player
         star = "🌟 " if is_top else ""
-        cards.append(
-            f"{star}{b(p.name)}  <i>{p.position} · {esc(p.team)}</i>\n"
-            f"💰 {b(m(item.price))} · {p.avg_points:.1f} pts/partido\n"
-            f"{i(analysis.trend_words(trend))}"
-        )
+        plan = _plan_for(world, item, trend, is_top)
+        cards.append("\n".join([
+            f"{star}{b(p.name)}  <i>{p.position} · {esc(p.team)}</i>",
+            f"💰 Mínimo {b(m(plan.minimum))} · {p.avg_points:.1f} pts/partido",
+            i(analysis.trend_words(trend)),
+            *_plan_lines(plan),
+        ]))
     if not cards:
         return ""
     head = f"{b('🛒 Mercado para tu once')}\n{i('Saldo disponible: ' + m(world.my_cash))}"
@@ -322,7 +364,10 @@ def market_report(world: World, min_score: float = 8.0) -> str:
 
 
 def market_keyboard(world: World, min_score: float = 8.0) -> dict | None:
-    return _keyboard([_bid_row(item) for item, _, _ in _market_picks(world, min_score) if item.listing_id])
+    return _keyboard([
+        row for item, trend, is_top in _market_picks(world, min_score)
+        for row in _bid_rows(world, item, trend, is_top)
+    ])
 
 
 def investment_report(world: World, top: int = 5) -> str:
@@ -334,19 +379,25 @@ def investment_report(world: World, top: int = 5) -> str:
     cards = []
     for item, t in picks:
         p = item.player
-        cards.append(
-            f"{b(p.name)}  <i>{esc(p.team)}</i>\n"
-            f"💰 {b(m(item.price))}\n"
-            f"{i(analysis.trend_words(t))}"
-        )
+        plan = _plan_for(world, item, t, False, with_ceiling=False)
+        cards.append("\n".join([
+            f"{b(p.name)}  <i>{esc(p.team)}</i>",
+            f"💰 Mínimo {b(m(plan.minimum))}",
+            i(analysis.trend_words(t)),
+            *_plan_lines(plan),
+        ]))
     head = f"{b('💹 Oportunidades de inversión')}\n{i('Comprar y revender, no para tu once')}"
     return head + "\n\n" + "\n\n".join(cards)
 
 
 def buy_keyboard(world: World) -> dict | None:
-    """Botones de puja de las dos listas de compra (mercado para tu once + inversión)."""
-    rows = [_bid_row(item) for item, _, _ in _market_picks(world) if item.listing_id]
-    rows += [_bid_row(item) for item, _ in _investment_picks(world) if item.listing_id]
+    """Botones de puja de las dos listas de compra (mercado para tu once + inversión). La
+    inversión es flipeo: sin botón de techo por puntos, solo mínimo y con margen."""
+    rows = [row for item, t, top in _market_picks(world) for row in _bid_rows(world, item, t, top)]
+    rows += [
+        row for item, t in _investment_picks(world)
+        for row in _bid_rows(world, item, t, False, with_ceiling=False)
+    ]
     return _keyboard(rows)
 
 
@@ -408,7 +459,10 @@ def market_arrivals_report(world: World, store) -> tuple[str, dict | None]:
             f"{i(detail)}"
         )
     head = f"{b('🗞️ Nuevo en el mercado')}\n{i('Estudio de viabilidad')}"
-    keyboard = _keyboard([_bid_row(item) for stars, item, *_ in rows if stars >= 3 and item.listing_id])
+    keyboard = _keyboard([
+        row for stars, item, trend, *_ in rows if stars >= 3
+        for row in _bid_rows(world, item, trend, item.player.id in world.league_top_ids)
+    ])
     return head + "\n\n" + "\n".join(cards), keyboard
 
 

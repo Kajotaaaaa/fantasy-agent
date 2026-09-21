@@ -137,6 +137,48 @@ def bid_ceiling(avg_points: float, alternative_ppm: float, is_top: bool) -> int:
     return round(ceiling)
 
 
+@dataclass
+class BidPlan:
+    minimum: int
+    margin: int | None  # puja "con margen": más que el mínimo porque la subida lo justifica
+    expected: int | None  # valor esperado a 3 días que justifica ese margen
+    ceiling: int | None  # máximo lógico para "lo quiero sí o sí"
+
+
+def bid_plan(
+    minimum: int,
+    market_value: int,
+    trend: Trend,
+    avg_points: float,
+    alternative_ppm: float,
+    is_top: bool,
+) -> BidPlan:
+    """Tres cantidades para el mismo anuncio, porque las pujas son ciegas y no juega solo el
+    usuario: pujar el mínimo es barato pero pierde contra cualquiera que ponga algo más.
+    - `margin`: si sube (d3 > 0) y se espera que valga más de lo que cuesta el mínimo (>2%),
+      puja el mínimo + la MITAD de esa ganancia esperada: la ventaja sobre el resto sale de
+      regalar solo parte del beneficio, y aunque ganes sigues quedándote con la otra mitad. El
+      valor esperado proyecta el ritmo de 3 días otros 3 días (horizonte de flipeo; no se mira
+      la ventana de 7).
+    - `ceiling`: el techo por puntos (`bid_ceiling`) para "lo quiero sí o sí" — solo si queda
+      claramente por encima de la puja anterior, si no no aporta nada.
+    Las cantidades se redondean a miles hacia arriba (no por debajo del mínimo)."""
+    margin = expected = None
+    if trend.d3 > 0 and market_value:
+        expected = round(market_value * (1 + trend.d3 / 100))
+        gain = expected - minimum
+        if gain > minimum * 0.02:
+            margin = -(-round(minimum + gain * 0.5) // 1000) * 1000
+    ceiling = bid_ceiling(avg_points, alternative_ppm, is_top) or None
+    if ceiling is not None:
+        # Nunca más del doble del mínimo: con pocas referencias de mercado el techo por puntos
+        # se dispara (un medio de 0.70M salió con techo de 12M) y eso ya no es una puja lógica.
+        ceiling = -(-min(ceiling, minimum * 2) // 1000) * 1000
+        if ceiling <= (margin or minimum) * 1.01:
+            ceiling = None
+    return BidPlan(minimum, margin, expected if margin else None, ceiling)
+
+
 def market_verdict(
     item: MarketItem,
     trend: Trend,

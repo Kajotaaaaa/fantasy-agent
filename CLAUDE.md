@@ -196,11 +196,24 @@ Elegido por el usuario: webhook (no sondeo). Cuatro acciones, código `<verbo>:<
 | código | botón | dónde sale | qué ejecuta `cli._act_*` |
 |---|---|---|---|
 | `c:<player_id>` | 💳 Pagar cláusula | alerta de cláusula pagable ya (`open_affordable`) y todas las especulativas | relee la plantilla del rival SIN caché y paga con `playerTeamId` |
-| `b:<listing_id>` | 💰 Pujar <nombre> <precio> | "Mercado para tu once" + "Inversión" (un mensaje, una fila por jugador) y "Nuevo en el mercado" (solo ≥3 ★) | puja al precio pedido; solo anuncios de LaLiga; nunca por encima del saldo |
+| `b:<listing_id>:<cantidad>` | 💰 mínimo / 📈 margen / 🎯 techo (hasta 3 filas por jugador) | "Mercado para tu once" + "Inversión" (un mensaje) y "Nuevo en el mercado" (solo ≥3 ★) | puja EXACTAMENTE esa cantidad; solo anuncios de LaLiga; nunca < mínimo válido, > saldo ni > 3x el mínimo |
 | `s:<player_id>` | 📤 Vender <nombre> <valor> | "Candidatos a vender" (tendencia a la baja) salvo los que ya están en venta | pone a la venta a valor de mercado |
 | `w:<player_id>` | ↩️ Retirar <nombre> | "En venta ahora" (`my_listings_report`, comando `listings`) | retira el anuncio |
 
 Los avisos "se libera en Xh" no llevan botón (aún no se puede pagar).
+
+**Tres pujas por jugador (`analysis.bid_plan`)** — porque las pujas son ciegas y no juega solo
+el usuario: el mínimo es barato pero pierde contra cualquiera que ponga algo más.
+- 💰 **mínimo** = `service.bid_amount` (mayor de precio pedido y valor de mercado).
+- 📈 **con margen** = mínimo + la MITAD de la ganancia esperada, solo si sube (d3 > 0) y esa
+  ganancia supera el 2% del mínimo. Ganancia esperada = valor de mercado proyectando el ritmo
+  de 3 días otros 3 (horizonte de flipeo, sin mirar 7 días). Regala solo la mitad del beneficio.
+- 🎯 **techo "lo quiero sí o sí"** = `bid_ceiling` por puntos (+30% si TOP), solo si queda
+  claramente por encima de la puja anterior, capado a 2x el mínimo (con pocas referencias salió
+  un techo de 12M para un medio de 0.70M) y solo con ≥3 referencias de mercado en su posición
+  (`position_ppm_benchmark` devuelve 0 con menos). No sale para "Inversión" (flipeo, no once).
+- La cantidad viaja en el código del botón: lo que confirmas es exactamente lo que se puja. No
+  se ofrece ninguna puja que supere tu saldo (regla del usuario: prohibido quedarse en negativo).
 ```
 botón "b:<id>" → Worker cambia SU fila a [✅ Confirmar · <etiqueta> "B:<id>"] + [❌ Cancelar "N:b:<id>"]
 "B:<id>" → Worker quita esas filas + repository_dispatch(fantasy-action, action="b:<id>")
