@@ -262,6 +262,27 @@ def trends_report(world: World) -> str:
     return "📊 TUS JUGADORES: vender o mantener\n\n" + "\n\n".join(lines)
 
 
+def losing_positions_report(world: World, store) -> str:
+    """Jugadores tuyos por debajo de lo que pagaste (precio de compra real, no tendencia de
+    mercado sin más) — usa el histórico de `my_transactions`, así que solo cubre lo comprado
+    desde que ese seguimiento arrancó."""
+    buy_prices = {pid: int(v) for pid, v in store.prefixed("buy_price:").items()}
+    trends = {pid: t for pid, (_, t) in world.trends.items()}
+    candidates = analysis.loss_cut_candidates(world.my_slots, buy_prices, trends)
+    if not candidates:
+        return ""
+    cards = []
+    for slot, buy, loss_pct in candidates:
+        p = slot.player
+        cards.append(
+            f"{p.name}\n"
+            f"Comprado por: {m(buy)}\n"
+            f"Valor actual: {m(p.market_value)}\n"
+            f"Pérdida: -{loss_pct:.0f}% ({m(buy - p.market_value)})"
+        )
+    return "🔻 CORTA PÉRDIDAS: tuyos por debajo de lo que pagaste\n\n" + "\n\n".join(cards)
+
+
 def rivals_report(world: World) -> str:
     lines = ["👥 RIVALES"]
     by_owner: dict[str, list[models.SquadSlot]] = {}
@@ -451,13 +472,19 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
     return "\n".join(lines)
 
 
-def report_sections(world: World, s: Settings, news: dict[str, dict] | None) -> list[str]:
+def report_sections(world: World, s: Settings, news: dict[str, dict] | None, store=None) -> list[str]:
     """Un mensaje por especialidad (alineación / mercado / cláusulas), listo para Telegram.
-    Omite lo que no tenga nada relevante que decir, para no mandar un tocho."""
+    Omite lo que no tenga nada relevante que decir, para no mandar un tocho. `store` es
+    opcional: sin él no se puede saber qué pagaste por tus jugadores, así que se omite la
+    sección de corta-pérdidas."""
     stamp = world.fetched_at.astimezone().strftime("%d/%m/%Y %H:%M")
     sections = [f"⚽ INFORME · {stamp}\n\n{lineup_report(world, news)}"]
 
     market_parts = [p for p in (market_report(world), investment_report(world), trends_report(world)) if p]
+    if store is not None:
+        losing = losing_positions_report(world, store)
+        if losing:
+            market_parts.append(losing)
     if market_parts:
         sections.append("\n\n".join(market_parts))
 

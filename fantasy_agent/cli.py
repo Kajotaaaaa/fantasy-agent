@@ -74,7 +74,7 @@ def _world(api, s, trends=True):
 
 def cmd_section(args, s) -> None:
     api = FantasyAPI(s)
-    world = _world(api, s, trends=args.cmd in ("market", "trends", "report"))
+    world = _world(api, s, trends=args.cmd in ("market", "trends", "report", "losses"))
     if args.cmd in ("clauses", "report"):
         service.ensure_clause_trends(api, world, s)
 
@@ -85,8 +85,10 @@ def cmd_section(args, s) -> None:
         news_targets += service.clause_titularidad_candidates(world, s)
     news = estimate_titularidad(api, news_targets) if news_targets else None
 
+    store = Store(s.db_file) if args.cmd in ("report", "losses") else None
+
     if args.cmd == "report":
-        sections = service.report_sections(world, s, news)
+        sections = service.report_sections(world, s, news, store)
         print("\n\n".join(sections))
         if args.telegram:
             notify.send_report(s, sections)
@@ -97,6 +99,7 @@ def cmd_section(args, s) -> None:
         "rivals": lambda: service.rivals_report(world),
         "clauses": lambda: service.clauses_report(world, s, news)[0],
         "lineup": lambda: service.lineup_report(world, news),
+        "losses": lambda: service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.",
     }[args.cmd]()
     _out(s, text, args.telegram)
 
@@ -132,7 +135,7 @@ def _watch_once(store: Store, s) -> str:
             news.update(estimate_titularidad(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5]))
         except Exception as exc:
             print(f"[titularidad] error: {exc}")
-        notify.send_report(s, service.report_sections(world, s, news))
+        notify.send_report(s, service.report_sections(world, s, news, store))
         store.set("last_daily", today)
     return (
         f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas · {len(tx)} movimientos"
@@ -198,6 +201,7 @@ def main(argv: list[str] | None = None) -> None:
         ("rivals", "Resumen de rivales"),
         ("clauses", "Alarmas de cláusulas"),
         ("lineup", "Once recomendado"),
+        ("losses", "Jugadores tuyos por debajo de lo que pagaste"),
         ("report", "Informe completo"),
     ]:
         p = sub.add_parser(name, help=help_)

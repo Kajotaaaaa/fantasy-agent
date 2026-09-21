@@ -31,3 +31,9 @@ class Store:
     def set(self, key: str, value: str) -> None:
         self.db.execute("INSERT OR REPLACE INTO kv(key, value) VALUES (?, ?)", (key, value))
         self.db.commit()
+
+    def prefixed(self, prefix: str) -> dict[str, str]:
+        """Todas las claves que empiezan por `prefix`, sin el prefijo. Vacíos (borrados con
+        `set(key, "")`) se omiten."""
+        rows = self.db.execute("SELECT key, value FROM kv WHERE key LIKE ?", (prefix + "%",)).fetchall()
+        return {k[len(prefix):]: v for k, v in rows if v}

@@ -39,6 +39,11 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   actividad más alto visto (`kv.last_activity_id`, sin TTL — el feed devuelve todo el
   histórico siempre) y cachea el precio de compra por jugador (`kv.buy_price:<id>`) para poder
   calcular ganancia/pérdida real en la venta o cláusula siguiente.
+- **Corta pérdidas** (`analysis.loss_cut_candidates`, `service.losing_positions_report`):
+  compara el valor de mercado actual de tus jugadores contra `kv.buy_price:<id>` (lo que
+  pagaste de verdad, no una referencia arbitraria). Si ya está recuperando (`trend.d3 > 1%`)
+  no avisa todavía — solo pérdidas sostenidas. Solo cubre lo comprado desde que arrancó el
+  seguimiento de movimientos (no hay dato de compra para lo que ya tenías antes).
 
 ## Mapa
 - `auth.py`     login Azure B2C (PKCE) y refresh de tokens

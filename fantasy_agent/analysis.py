@@ -323,6 +323,32 @@ def clause_alerts(
     return alerts
 
 
+def loss_cut_candidates(
+    my_slots: list[SquadSlot],
+    buy_prices: dict[str, int],
+    trends: dict[str, Trend],
+    min_loss_pct: float = 8.0,
+) -> list[tuple[SquadSlot, int, float]]:
+    """Jugadores tuyos cuyo valor de mercado ha caído por debajo de lo que pagaste — una
+    pérdida real si los vendieras ahora, no una simple tendencia de mercado. Solo con precio de
+    compra conocido (registrado por `service.my_transactions` al comprarlos). Si ya está
+    recuperando (d3 > 1%) no se avisa todavía: dale margen antes de decir "corta pérdidas"."""
+    out = []
+    for slot in my_slots:
+        buy = buy_prices.get(slot.player.id)
+        if not buy or not slot.player.market_value:
+            continue
+        loss_pct = (buy - slot.player.market_value) / buy * 100
+        if loss_pct < min_loss_pct:
+            continue
+        trend = trends.get(slot.player.id)
+        if trend and trend.d3 > 1:
+            continue
+        out.append((slot, buy, loss_pct))
+    out.sort(key=lambda x: -x[2])
+    return out
+
+
 def top_movers(trends: dict[str, tuple[Player, Trend]], n: int = 5) -> tuple[list, list]:
     ordered = sorted(trends.values(), key=lambda t: t[1].d3)
     fallers = [t for t in ordered[:n] if t[1].d3 < 0]
