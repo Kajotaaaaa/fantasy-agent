@@ -53,6 +53,18 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   runner de GitHub Actions va en UTC) — nunca compares horas de juego con `datetime.now()` a
   secas.
 
+## Saldo estimado de rivales (la API solo expone el tuyo)
+`analysis.reconstruct_cash_flow`/`estimate_cash`, `service.estimate_rival_cash` (comando
+`rivals` y `clause-risk`, y en el informe diario): el campo `teamMoney` viene `null` para
+cualquier equipo que no sea el tuyo (comprobado con `probe`), así que se reconstruye sumando
+todo el historial de `/activity` (paginado hacia atrás hasta que llega vacío — cubre toda la
+temporada) y calibrando el presupuesto de partida con tu propio saldo real, que sí conocemos.
+Asume que todos los equipos empezaron con el mismo presupuesto — es una ESTIMACIÓN, se marca
+como tal en todos los informes que la usan. `clause_theft_risk`/`clause_theft_report`: de tus
+jugadores con la cláusula pagable ahora, qué rivales tienen saldo estimado suficiente para
+pagarla (excluye tu propio team_id explícitamente — si no, aparecías como "amenaza" de ti
+mismo).
+
 ## Cláusulas especulativas (caras pero con racha fuerte y sostenida)
 `analysis.speculative_clause_candidates`/`speculative_clause_verdict`/`speculative_clause_alerts`
 (`service.speculative_clauses_report`, comando `clauses-hot`): cláusulas que NO pasan el filtro

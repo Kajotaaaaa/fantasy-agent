@@ -228,6 +228,15 @@ def parse_calendar(payload: Any) -> list[Fixture]:
     return out
 
 
+# activityTypeId conocidos del feed de actividad (identificados cruzando contra la plantilla
+# real, ver `parse_activity`): 9 (te unes a la liga) y 10 (evento de liga) no mueven dinero.
+ACTIVITY_CLAUSE = 1
+ACTIVITY_SHIELD = 4
+ACTIVITY_WEEKLY_BONUS = 6
+ACTIVITY_BUY = 31
+ACTIVITY_SELL = 33
+
+
 @dataclass
 class Activity:
     id: str

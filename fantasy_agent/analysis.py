@@ -6,7 +6,16 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from .models import MarketItem, Player, SquadSlot
+from .models import (
+    ACTIVITY_BUY,
+    ACTIVITY_CLAUSE,
+    ACTIVITY_SELL,
+    ACTIVITY_WEEKLY_BONUS,
+    Activity,
+    MarketItem,
+    Player,
+    SquadSlot,
+)
 
 
 def esc(text) -> str:
@@ -612,3 +621,51 @@ def top_movers(trends: dict[str, tuple[Player, Trend]], n: int = 5) -> tuple[lis
     fallers = [t for t in ordered[:n] if t[1].d3 < 0]
     risers = [t for t in reversed(ordered[-n:]) if t[1].d3 > 0]
     return risers, fallers
+
+
+# ---------- saldo estimado de rivales (la API solo expone el tuyo) --------------------------
+def reconstruct_cash_flow(events: list[Activity], manager_id: str) -> int:
+    """Efecto neto en el saldo de un manager a partir del historial de movimientos: compras y
+    cláusulas pagadas restan, ventas, cláusulas cobradas y bonos semanales suman. El blindaje
+    (`ACTIVITY_SHIELD`) no mueve dinero, se ignora."""
+    total = 0
+    for e in events:
+        if e.type_id == ACTIVITY_BUY and e.user1_id == manager_id:
+            total -= e.amount
+        elif e.type_id == ACTIVITY_SELL and e.user1_id == manager_id:
+            total += e.amount
+        elif e.type_id == ACTIVITY_CLAUSE and e.user1_id == manager_id:
+            total -= e.amount
+        elif e.type_id == ACTIVITY_CLAUSE and e.user2_id == manager_id:
+            total += e.amount
+        elif e.type_id == ACTIVITY_WEEKLY_BONUS and e.user1_id == manager_id:
+            total += e.amount
+    return total
+
+
+def estimate_cash(events: list[Activity], my_manager_id: str, my_cash: int, manager_ids: dict[str, str]) -> dict[str, int]:
+    """Saldo estimado de cada equipo (`manager_ids`: team_id -> manager_id), calibrado con tu
+    saldo real (el único que la API expone): se asume que todos los equipos empezaron con el
+    mismo presupuesto, y se despeja ese presupuesto a partir de tu propio flujo neto conocido.
+    Es una estimación — si algún equipo empezó con un presupuesto distinto al tuyo, o hay algún
+    tipo de movimiento de dinero que no reconocemos todavía, se desvía."""
+    my_flow = reconstruct_cash_flow(events, my_manager_id)
+    implied_start = my_cash - my_flow
+    return {team_id: implied_start + reconstruct_cash_flow(events, mgr_id) for team_id, mgr_id in manager_ids.items()}
+
+
+def clause_theft_risk(
+    my_slots: list[SquadSlot],
+    rival_cash: dict[str, int],
+    now: datetime,
+) -> list[tuple[SquadSlot, list[str]]]:
+    """De tus jugadores con la cláusula pagable ahora mismo, cuáles tienen algún rival con
+    saldo estimado suficiente para pagarla — quién podría robártelo."""
+    out = []
+    for slot in my_slots:
+        if not slot.clause_open(now):
+            continue
+        threats = [team_id for team_id, cash in rival_cash.items() if cash >= slot.clause]
+        if threats:
+            out.append((slot, threats))
+    return out

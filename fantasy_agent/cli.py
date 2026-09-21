@@ -108,8 +108,12 @@ def cmd_section(args, s) -> None:
 
     store = Store(s.db_file) if args.cmd in ("report", "losses", "market-news") else None
 
+    rival_cash = {}
+    if args.cmd in ("rivals", "clause-risk"):
+        rival_cash = service.estimate_rival_cash(api, world)
+
     if args.cmd == "report":
-        sections = service.report_sections(world, s, news, store)
+        sections = service.report_sections(world, s, news, store, service.estimate_rival_cash(api, world))
         print("\n\n".join(sections))
         if args.telegram:
             notify.send_report(s, sections)
@@ -117,9 +121,10 @@ def cmd_section(args, s) -> None:
     text = {
         "market": lambda: service.market_report(world),
         "trends": lambda: service.trends_report(world),
-        "rivals": lambda: service.rivals_report(world),
+        "rivals": lambda: service.rivals_report(world, rival_cash),
         "clauses": lambda: service.clauses_report(world, s, news)[0],
         "clauses-hot": lambda: service.speculative_clauses_report(world, s)[0] or "Nada especulativo ahora mismo.",
+        "clause-risk": lambda: service.clause_theft_report(world, rival_cash) or "Ningún rival te llega ahora mismo.",
         "lineup": lambda: service.lineup_report(world, news),
         "losses": lambda: service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.",
         "market-news": lambda: service.market_arrivals_report(world, store) or "Nada nuevo desde el último estudio.",
@@ -178,7 +183,12 @@ def _watch_once(store: Store, s) -> str:
             news.update(estimate_titularidad(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5]))
         except Exception as exc:
             print(f"[titularidad] error: {exc}")
-        notify.send_report(s, service.report_sections(world, s, news, store))
+        rival_cash = {}
+        try:
+            rival_cash = service.estimate_rival_cash(api, world)
+        except Exception as exc:
+            print(f"[aviso] sin saldo estimado de rivales: {exc}")
+        notify.send_report(s, service.report_sections(world, s, news, store, rival_cash))
         store.set("last_daily", today)
     return (
         f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas · {len(fresh_hot)} especulativas · {len(tx)} movimientos"
@@ -245,6 +255,7 @@ def main(argv: list[str] | None = None) -> None:
         ("rivals", "Resumen de rivales"),
         ("clauses", "Alarmas de cláusulas"),
         ("clauses-hot", "Cláusulas especulativas: caras pero con racha fuerte sostenida"),
+        ("clause-risk", "Tus jugadores que algún rival podría pagarte de cláusula (saldo estimado)"),
         ("lineup", "Once recomendado"),
         ("losses", "Jugadores tuyos por debajo de lo que pagaste"),
         ("market-news", "Nuevo en el mercado desde el último estudio, con veredicto"),

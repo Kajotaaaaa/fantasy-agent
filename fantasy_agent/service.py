@@ -362,13 +362,14 @@ def losing_positions_report(world: World, store) -> str:
     return f"{b('🔻 Corta pérdidas')}\n{i('Por debajo de lo que pagaste')}\n\n" + "\n\n".join(cards)
 
 
-def rivals_report(world: World) -> str:
+def rivals_report(world: World, rival_cash: dict[str, int] | None = None) -> str:
     lines = [b("👥 Rivales")]
     by_owner: dict[str, list[models.SquadSlot]] = {}
     for sl in world.rival_slots:
         by_owner.setdefault(sl.owner_team_id, []).append(sl)
     now = datetime.now(timezone.utc)
     for row in sorted(world.standing, key=lambda r: r.points, reverse=True):
+        cash_note = f" · saldo est. {m((rival_cash or {}).get(row.team_id))}" if rival_cash else ""
         if row.team_id == world.my_team_id:
             lines.append(f"• {b('TÚ')} <i>({esc(row.manager_name)})</i>: {row.points} pts · valor {m(row.team_value)}")
             continue
@@ -376,10 +377,60 @@ def rivals_report(world: World) -> str:
         top_names = esc(", ".join(s.player.name for s in slots[:3]))
         open_cl = sum(1 for s in slots if s.clause_open(now))
         lines.append(
-            f"• {b(row.manager_name)}: {row.points} pts · valor {m(row.team_value)} · "
+            f"• {b(row.manager_name)}: {row.points} pts · valor {m(row.team_value)}{cash_note} · "
             f"cláusulas abiertas {open_cl} · top: {top_names}"
         )
+    if rival_cash:
+        lines.append(i("Saldo estimado a partir del historial de fichajes — puede desviarse."))
     return "\n".join(lines)
+
+
+def estimate_rival_cash(api: FantasyAPI, world: World, max_pages: int = 20) -> dict[str, int]:
+    """Saldo estimado de cada equipo a partir del historial completo de movimientos
+    (`/activity`, paginado hacia atrás hasta que llega vacío): la API solo expone tu propio
+    saldo (`world.my_cash`), así que se reconstruye el de los rivales sumando compras, ventas,
+    cláusulas y bonos semanales desde el principio de temporada, calibrando el presupuesto de
+    partida con tu saldo real. Ver `analysis.estimate_cash` para el detalle y sus supuestos."""
+    if world.my_cash is None:
+        return {}
+    events: list[models.Activity] = []
+    for idx in range(max_pages):
+        try:
+            raw = api.activity(world.league_id, idx)
+        except Exception as exc:
+            print(f"[aviso] fallo leyendo actividad (index {idx}): {exc}")
+            break
+        if not raw:
+            break
+        events.extend(models.parse_activity(raw))
+
+    my_manager_id = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), None)
+    if not my_manager_id:
+        return {}
+    manager_ids = {r.team_id: r.manager_id for r in world.standing}
+    return analysis.estimate_cash(events, my_manager_id, world.my_cash, manager_ids)
+
+
+def clause_theft_report(world: World, rival_cash: dict[str, int]) -> str:
+    """Tus jugadores con la cláusula pagable ahora mismo que algún rival podría pagarte, según
+    el saldo estimado. Solo se muestra si hay riesgo real, para no repetir en cada informe."""
+    now = datetime.now(timezone.utc)
+    others_cash = {tid: cash for tid, cash in rival_cash.items() if tid != world.my_team_id}
+    risky = analysis.clause_theft_risk(world.my_slots, others_cash, now)
+    if not risky:
+        return ""
+    names_by_team = {r.team_id: r.manager_name for r in world.standing}
+    cards = []
+    for slot, threats in risky:
+        p = slot.player
+        threat_names = esc(", ".join(names_by_team.get(t, t) for t in threats))
+        cards.append(
+            f"{b(p.name)}\n"
+            f"Cláusula: {b(m(slot.clause))}\n"
+            f"{i('Podrían pagarla: ' + threat_names)}"
+        )
+    head = f"{b('⚠️ Riesgo de que te clausulen')}\n{i('Saldo estimado, puede desviarse')}"
+    return head + "\n\n" + "\n\n".join(cards)
 
 
 def ensure_clause_trends(api: FantasyAPI, world: World, s: Settings) -> None:
@@ -458,8 +509,7 @@ def _player_name(api: FantasyAPI, world: World, player_id: str) -> str:
         return f"jugador #{player_id}"
 
 
-# Tipos del feed de actividad que son transacciones de dinero por un jugador (ver `models.parse_activity`).
-_TX_BUY, _TX_SELL, _TX_CLAUSE = 31, 33, 1
+_TX_BUY, _TX_SELL, _TX_CLAUSE = models.ACTIVITY_BUY, models.ACTIVITY_SELL, models.ACTIVITY_CLAUSE
 
 
 def my_transactions(api: FantasyAPI, world: World, store) -> list[str]:
@@ -585,11 +635,14 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
     return "\n".join(lines)
 
 
-def report_sections(world: World, s: Settings, news: dict[str, dict] | None, store=None) -> list[str]:
+def report_sections(
+    world: World, s: Settings, news: dict[str, dict] | None, store=None, rival_cash: dict[str, int] | None = None,
+) -> list[str]:
     """Un mensaje por especialidad (alineación / mercado / cláusulas), listo para Telegram.
     Omite lo que no tenga nada relevante que decir, para no mandar un tocho. `store` es
     opcional: sin él no se puede saber qué pagaste por tus jugadores, así que se omite la
-    sección de corta-pérdidas."""
+    sección de corta-pérdidas. `rival_cash` opcional: sin él se omite el riesgo de que te
+    clausulen (requiere el historial completo de movimientos, más caro de pedir)."""
     stamp = world.fetched_at.astimezone().strftime("%d/%m/%Y %H:%M")
     sections = [f"{b('⚽ Informe')}\n{i(stamp)}\n\n{lineup_report(world, news)}"]
 
@@ -604,6 +657,11 @@ def report_sections(world: World, s: Settings, news: dict[str, dict] | None, sto
     clauses_text, alerts = clauses_report(world, s, news)
     if alerts:
         sections.append(clauses_text)
+
+    if rival_cash:
+        theft = clause_theft_report(world, rival_cash)
+        if theft:
+            sections.append(theft)
 
     return sections
 
