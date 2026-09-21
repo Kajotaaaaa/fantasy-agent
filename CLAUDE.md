@@ -32,11 +32,22 @@ s de Telegram -> Worker -> runner) llegan tarde, pero la hora de desbloqueo
   cada 10 s desde T-60 s, y a T+0 dispara `pay_clause` cada 0.15 s hasta 20 s (sin el ritmo de
   peticiones "humano"). Si el pago cuelga o da error raro, comprueba si el jugador ya es tuyo
   antes de reintentar (no paga dos veces). Un 409 "importe no actualizado" relee la cláusula.
-- **Autorización explícita del usuario (2026-09-21):** al armar y confirmar, el bot puede gastar
-  el dinero necesario para clausular a ESE jugador. Topes aun así: `CAP_FACTOR` 1.25x la
-  cláusula del momento de armar (si el dueño la sube más, cancela y avisa), nunca sin saldo
-  (no se puede pagar cláusula endeudándose) y si el desbloqueo cae en la congelación de
-  cláusulas de la liga (`world.clause_freeze`) espera a que termine (`fire_time`).
+- **Autorización explícita del usuario (2026-09-21): se compra POR EL IMPORTE EXACTO que viste,
+  y el armado SE QUEDA PUESTO.** El botón lleva el importe (`a:<player_id>:<importe>`, en el
+  texto y en el código) y el trabajo solo paga ESE importe. Si el dueño cambia la cláusula antes
+  del desbloqueo, el trabajo NO se elimina: sigue esperando por lo autorizado, te avisa (una
+  vez por importe nuevo, `changed_message`) y te pregunta con un botón si quieres dejarla
+  cargada también por el nuevo (otro trabajo por el nuevo importe). Sin respuesta y con otro
+  importe en el desbloqueo, NO compra y te lo cuenta (`refuse`); nunca paga un importe que no
+  hayas confirmado. Se comprueba cada 45 s (`CHECK_EVERY`) y a T-25 s. Un 409 al pagar
+  ("importe no actualizado") vuelve a comprobar. Además nunca sin saldo (no se puede pagar
+  cláusula endeudándose) y, si el desbloqueo cae en la congelación de cláusulas de la liga
+  (`world.clause_freeze`), espera a que termine (`fire_time`). Sin cancelar por botón: para
+  anular un armado hay que cancelar el run en GitHub Actions.
+- `python -m fantasy_agent simulate-clause` manda por Telegram el SIMULACRO de los dos avisos
+  (Rodri ficticio, 80M de valor, 86M de cláusula, se libera hoy a las 21:00:00; tu saldo real).
+  Sus botones apuntan al id 99999999 (inexistente): pulsarlos recorre el circuito y acaba en un
+  ❌ inofensivo.
 - **Pagar por encima de su valor (Rodri: vale 80M, cláusula 86M):** el flujo armado NO mira si
   compensa — el veredicto de las alertas ("No compensa") es solo informativo y el botón sale
   igual; los únicos topes son 1.25x la cláusula y el saldo.

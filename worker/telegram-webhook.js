@@ -21,7 +21,7 @@ const PAYLOADS = {
   u: /^\d{1,12}:\d{1,12}:\d{1,12}$/, // cambiar puja: "<anuncio>:<puja>:<cantidad>"
   s: /^\d{1,12}$/,
   w: /^\d{1,12}$/,
-  a: /^\d{1,12}$/, // armar la compra de una cláusula al desbloquearse
+  a: /^\d{1,12}(:\d{1,12})?$/, // armar la compra de una cláusula al desbloquearse: "<jugador>:<importe>"
 };
 // Qué workflow lanza cada verbo al confirmar: por defecto el corto de acciones (fantasy-action);
 // armar una cláusula espera hasta el desbloqueo, así que va a su propio trabajo largo.

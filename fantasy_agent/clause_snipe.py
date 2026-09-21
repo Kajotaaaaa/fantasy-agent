@@ -1,17 +1,21 @@
-"""Comprar una cláusula en el MISMO SEGUNDO en que se desbloquea.
+"""Comprar una cláusula en el MISMO SEGUNDO en que se desbloquea, por el precio EXACTO que viste.
 
 La hora de desbloqueo de cada cláusula (`buyoutClauseLockedEndTime`) se conoce al segundo, y el
 primero que paga se lleva al jugador. El vigilante de 30 min y el botón normal (Telegram ->
 Worker -> runner de GitHub, 20-60 s) llegan tarde, así que aquí se ARMA la compra con
-antelación: el usuario pulsa "🎯 Comprar al desbloquearse" y confirma (doble confirmación de
-siempre); ese botón lanza este trabajo, que espera con la hora del servidor de LaLiga y dispara
-el pago al desbloquearse, reintentando cada ~0.15 s.
+antelación: el usuario pulsa "🎯 Comprar al desbloquearse ... por X" y confirma (doble
+confirmación de siempre); ese botón lanza este trabajo, que espera con la hora del servidor de
+LaLiga y dispara el pago al desbloquearse, reintentando cada ~0.15 s.
 
-AUTORIZACIÓN (explícita del usuario, 2026-09-21): al armar y confirmar, el bot puede gastar el
-dinero necesario para clausular a ESE jugador. Topes de seguridad, aun así: nunca más de
-`CAP_FACTOR` veces la cláusula que había al armar (si el dueño la sube más, se cancela y se
-avisa), nunca sin saldo suficiente (no se puede pagar una cláusula endeudándose), y si el
-desbloqueo cae dentro de la congelación de cláusulas de la liga se espera a que termine.
+REGLA DEL USUARIO (2026-09-21): lo que autoriza es comprar POR ESE IMPORTE EXACTO, y el armado
+SE QUEDA PUESTO (no se elimina). Si el dueño cambia la cláusula (sube o baja) entre que armas y
+el desbloqueo, el trabajo sigue esperando por el importe autorizado, te AVISA con el importe
+nuevo (una vez por importe) y te pregunta con un botón si quieres dejarla cargada también por el
+nuevo. Nunca paga un importe que no hayas confirmado: si al desbloquearse vale otra cosa y no
+has confirmado el nuevo, no compra y te lo cuenta. Se vigila cada `CHECK_EVERY` s durante la
+espera y una última vez a `PREFETCH_AT` s del desbloqueo. Además: nunca sin saldo suficiente (no
+se puede pagar una cláusula endeudándose) y si el desbloqueo cae dentro de la congelación de
+cláusulas de la liga se espera a que termine.
 
 Un trabajo de GitHub dura como mucho 6 h, así que solo se acepta armar con menos de
 `MAX_ARM` por delante. Durante el último minuto edita un mensaje de Telegram con la cuenta atrás."""
@@ -30,10 +34,10 @@ from .http import HttpError
 from .snipe import _server_offset
 
 MAX_ARM = timedelta(hours=service.MAX_ARM_HOURS)
-CAP_FACTOR = 1.25  # si la cláusula sube por encima de esto respecto a la del momento de armar, no se paga
+CHECK_EVERY = 45  # segundos entre comprobaciones de que la cláusula sigue igual mientras se espera
 COUNTDOWN_FROM = 60  # segundos antes del desbloqueo en que empieza el contador
 COUNTDOWN_STEP = 10
-PREFETCH_AT = 25  # segundos antes: se relee la plantilla del dueño (id de hueco y cláusula al día)
+PREFETCH_AT = 25  # segundos antes: última comprobación (plantilla del dueño, importe y saldo al día)
 FIRE_WINDOW = timedelta(seconds=20)  # cuánto se insiste tras el desbloqueo antes de darlo por perdido
 RETRY_EVERY = 0.15
 
@@ -52,6 +56,62 @@ def fire_time(
         elif t is not None and start <= t < end:
             t = end
     return t
+
+
+def _reach(cash: int | None, clause: int) -> str:
+    if cash is None:
+        return ""
+    return f"\nTu saldo: {b(service.m(cash))} — " + ("✅ te llega" if cash >= clause else "❌ no te llega")
+
+
+def reminder_message(
+    slot: models.SquadSlot, when: datetime | None, cash: int | None, now: datetime,
+) -> tuple[str, dict]:
+    """El aviso de que una cláusula de tu lista de seguimiento ya se puede armar: hora, importe
+    frente al valor, tu saldo y la pregunta de si la dejas cargada por EXACTAMENTE ese importe."""
+    p = slot.player
+    ratio = f" (x{slot.clause / p.market_value:.2f} de su valor {service.m(p.market_value)})" if p.market_value else ""
+    if when is None:
+        text = (
+            f"🔓 {b(p.name)} de {esc(slot.owner_name)} ya está abierta: cláusula {b(service.m(slot.clause))}{ratio}"
+            f"{_reach(cash, slot.clause)}"
+        )
+        return text, service._clause_keyboard(p.id)
+    left = when - now
+    hours, minutes = int(left.total_seconds() // 3600), int(left.total_seconds() % 3600 // 60)
+    text = (
+        f"⏰ {b(p.name)} de {esc(slot.owner_name)}: se le acaba el bloqueo de la cláusula a las "
+        f"{b(when.strftime('%H:%M:%S'))} (en {hours} h {minutes:02d} min).\n"
+        f"Cláusula ahora: {b(service.m(slot.clause))}{ratio}{_reach(cash, slot.clause)}\n"
+        f"{i(f'¿La dejas comprada ya por EXACTAMENTE {service.m(slot.clause)}? La pago en el segundo del desbloqueo. Si el dueño cambia el importe antes, no pago: te aviso y te vuelvo a preguntar.')}"
+    )
+    return text, service._keyboard([service._arm_row(p.name, p.id, when, slot.clause)])
+
+
+def changed_message(
+    name: str, owner: str, player_id: str, old: int, new: int, when: datetime | None, cash: int | None,
+    armed: bool = True,
+) -> tuple[str, dict]:
+    """El dueño ha cambiado la cláusula. Si la compra estaba armada (`armed`), SIGUE puesta por el
+    importe que autorizaste (no se elimina): solo pagará ese importe exacto. Se te pregunta si
+    quieres dejarla cargada también por el nuevo (botón); sin respuesta, si en el desbloqueo
+    vale el importe nuevo, no se compra nada."""
+    sube = "subido" if new > old else "bajado"
+    if armed:
+        estado = (
+            f"Tu compra armada {b('sigue puesta')} por {service.m(old)}: solo pagaré ese importe exacto."
+        )
+        pregunta = f"¿La dejas cargada también por {service.m(new)}? Si no pulsas nada, y en el desbloqueo vale {service.m(new)}, no compro."
+    else:
+        estado = f"No he armado nada: pediste {service.m(old)} y ya no vale eso."
+        pregunta = f"¿La dejo cargada por {service.m(new)}? Si no pulsas nada, no se compra."
+    text = (
+        f"⚠️ {b(name)}: {esc(owner)} ha {sube} la cláusula, de {b(service.m(old))} a {b(service.m(new))}.\n"
+        f"{estado}{_reach(cash, new)}\n{i(pregunta)}"
+    )
+    if when is None:
+        return text, service._clause_keyboard(player_id)
+    return text, service._keyboard([service._arm_row(name, player_id, when, new)])
 
 
 def parse_wanted(text: str) -> set[str]:
@@ -88,9 +148,8 @@ def wanted_targets(
 
 def remind_wanted(world: service.World, store, s: Settings) -> list[str]:
     """Avisa (una vez por jugador y desbloqueo) de que un jugador de `CLAUSE_WANTED` ya se puede
-    armar, con todo lo que hace falta para decidir: hora, cláusula frente a su valor, tu saldo y
-    el botón "🎯 Comprar al desbloquearse". NO arma nada: decides tú al verlo (decisión del
-    usuario: prefiere ver el importe y su dinero en ese momento)."""
+    armar (`reminder_message`). NO arma nada: decides tú al verlo (decisión del usuario: prefiere
+    ver el importe y su dinero en ese momento)."""
     wanted = parse_wanted(os.environ.get("CLAUSE_WANTED", ""))
     if not wanted:
         return []
@@ -101,26 +160,36 @@ def remind_wanted(world: service.World, store, s: Settings) -> list[str]:
         if store.get(key):
             continue
         store.set(key, "1")
-        p = sl.player
-        ratio = f" (x{sl.clause / p.market_value:.2f} de su valor {service.m(p.market_value)})" if p.market_value else ""
-        reach = "" if world.my_cash is None else (
-            f"\nTu saldo: {b(service.m(world.my_cash))} — " + ("✅ te llega" if world.my_cash >= sl.clause else "❌ no te llega")
-        )
-        if when is None:
-            text = f"🔓 {b(p.name)} de {esc(sl.owner_name)} ya está abierta: cláusula {b(service.m(sl.clause))}{ratio}{reach}"
-            buttons = service._clause_keyboard(p.id)
-        else:
-            left = when - now
-            hours, minutes = int(left.total_seconds() // 3600), int(left.total_seconds() % 3600 // 60)
-            text = (
-                f"⏰ {b(p.name)} de {esc(sl.owner_name)} se desbloquea a las {b(when.strftime('%H:%M:%S'))} "
-                f"(en {hours} h {minutes:02d} min): cláusula {b(service.m(sl.clause))}{ratio}{reach}\n"
-                f"{i('Si la quieres, déjala cargada ahora y la pago en ese segundo.')}"
-            )
-            buttons = service._keyboard([service._arm_row(p.name, p.id, when)])
+        text, buttons = reminder_message(sl, when, world.my_cash, now)
         notify.send_telegram(s, f"⭐ {b('Lista de seguimiento')}\n{text}", buttons=buttons)
-        out.append(f"aviso {p.name}")
+        out.append(f"aviso {sl.player.name}")
     return out
+
+
+def simulate(api: FantasyAPI, s: Settings) -> None:
+    """SIMULACRO de los dos mensajes de la compra armada, con datos de mentira (Rodri, 80M de
+    valor, 86M de cláusula, que se libera hoy a las 21:00:00) pero TU saldo real: el aviso
+    "¿la dejas comprada por exactamente X?" y el "el dueño ha cambiado la cláusula, ¿por el
+    nuevo importe?". Los botones apuntan a un jugador que no existe (id 99999999): si los pulsas
+    el circuito completo se recorre y acaba en un ❌ inofensivo, sin comprar nada."""
+    world = service.build_world(api, s, with_trends=False)
+    base = next(sl for sl in world.rival_slots if sl.player.position_id != 5)
+    now = datetime.now(timezone.utc)
+    tz = base.clause_locked_until.tzinfo if base.clause_locked_until else timezone(timedelta(hours=2))
+    today = now.astimezone(tz)
+    unlock = today.replace(hour=21, minute=0, second=0, microsecond=0)
+    if unlock <= now:
+        unlock += timedelta(days=1)
+    fake = replace(
+        base, player=replace(base.player, id="99999999", name="Rodri", market_value=80_000_000),
+        clause=86_000_000, clause_locked_until=unlock,
+    )
+    text, buttons = reminder_message(fake, unlock, world.my_cash, now - timedelta(hours=max(0, 5 - (unlock - now).total_seconds() / 3600)))
+    notify.send_telegram(s, f"🧪 {b('SIMULACRO')} — así te avisaría\n\n⭐ {b('Lista de seguimiento')}\n{text}", buttons=buttons)
+    text2, buttons2 = changed_message("Rodri", base.owner_name, "99999999", 86_000_000, 92_000_000, unlock, world.my_cash)
+    notify.send_telegram(
+        s, f"🧪 {b('SIMULACRO')} — y si el dueño la cambia después de que la dejaras cargada\n\n{text2}", buttons=buttons2,
+    )
 
 
 def _fresh(api: FantasyAPI, world: service.World, owner_team_id: str, owner_name: str, player_id: str):
@@ -135,9 +204,13 @@ def _mine_now(api: FantasyAPI, world: service.World, player_id: str) -> bool:
     return any(sl.player.id == player_id for sl in squad)
 
 
-def run(api: FantasyAPI, s: Settings, player_id: str, dry: bool = False, unlock_in: float | None = None) -> None:
-    """`dry` + `unlock_in` (segundos) SOLO para pruebas: simula un desbloqueo dentro de N segundos
-    y hace todo igual (esperas, cuenta atrás, revalidación) menos el pago, que se da por hecho."""
+def run(
+    api: FantasyAPI, s: Settings, player_id: str, expected: int | None = None, dry: bool = False,
+    unlock_in: float | None = None,
+) -> None:
+    """`expected`: el importe que viste y autorizaste (viaja en el botón; sin él, el de ahora).
+    `dry` + `unlock_in` (segundos) SOLO para pruebas: simula un desbloqueo dentro de N segundos y
+    hace todo igual (esperas, cuenta atrás, revalidaciones) menos el pago, que se da por hecho."""
     fast = FantasyAPI(replace(s, request_delay_s=0.0))  # sin el ritmo "humano": aquí cada décima cuenta
     tag = "(SIMULACRO) " if dry else ""
     league_id, _, cash = service.resolve_league(fast, s)
@@ -153,12 +226,15 @@ def run(api: FantasyAPI, s: Settings, player_id: str, dry: bool = False, unlock_
     fire_at = fire_time(slot.clause_locked_until, world.clause_freeze, now())
     if unlock_in is not None:
         fire_at = now() + timedelta(seconds=unlock_in)
-    armed_clause = slot.clause
-    cap = round(armed_clause * CAP_FACTOR)
-    if cash is not None and armed_clause > cash:
+    amount = expected or slot.clause
+    if slot.clause != amount:  # cambió entre el aviso y tu confirmación: no se arma nada
+        text, buttons = changed_message(name, owner, player_id, amount, slot.clause, fire_at, cash, armed=False)
+        notify.send_telegram(s, text, buttons=buttons)
+        return
+    if cash is not None and amount > cash:
         notify.send_telegram(
             s, f"❌ {b('No armo la compra')}\nTu saldo ({service.m(cash)}) no llega a la cláusula de {b(name)} "
-               f"({service.m(armed_clause)}); no se puede pagar una cláusula endeudándose.",
+               f"({service.m(amount)}); no se puede pagar una cláusula endeudándose.",
         )
         return
     if fire_at is not None and fire_at - now() > MAX_ARM:
@@ -170,39 +246,72 @@ def run(api: FantasyAPI, s: Settings, player_id: str, dry: bool = False, unlock_
 
     when = f"a las {fire_at.strftime('%H:%M:%S')} (hora de la liga)" if fire_at else "ya"
     notify.send_telegram(
-        s, f"🎯 {tag}{b('Compra armada')}\n{b(name)} de {esc(owner)}: cláusula {b(service.m(armed_clause))}, "
-           f"la pagaré {when}.\n{i(f'Máximo que pagaré: {service.m(cap)} (si el dueño la sube más, cancelo).')}",
+        s, f"🎯 {tag}{b('Compra armada')}\n{b(name)} de {esc(owner)}: la pagaré {when} por exactamente "
+           f"{b(service.m(amount))}.\n{i('Si el dueño cambia el importe antes, cancelo y te vuelvo a preguntar.')}",
     )
 
-    ptid, amount = slot.player_team_id, armed_clause
+    warned: set[int] = set()  # importes nuevos de los que ya te he avisado (una vez por importe)
+
+    def check() -> models.SquadSlot | None:
+        """Relee la plantilla del dueño. Si la cláusula ya no vale lo autorizado, AVISA (una vez
+        por importe nuevo) y te pregunta, pero la compra armada SIGUE puesta: no se elimina.
+        Devuelve la fila actual, o None si el jugador ya no está con ese dueño."""
+        nonlocal ptid
+        fresh = _fresh(fast, world, slot.owner_team_id, owner, player_id)
+        if fresh is None:
+            return None
+        ptid = fresh.player_team_id
+        if fresh.clause != amount and fresh.clause not in warned:
+            warned.add(fresh.clause)
+            text, buttons = changed_message(
+                name, owner, player_id, amount, fresh.clause,
+                fire_time(fresh.clause_locked_until, world.clause_freeze, now()), service.resolve_league(fast, s)[2],
+            )
+            notify.send_telegram(s, text, buttons=buttons)
+        return fresh
+
+    def gone() -> None:
+        notify.send_telegram(s, f"❌ {b('Compra armada sin efecto')}\n{b(name)} ya no está con {esc(owner)}.")
+
+    def refuse(fresh: models.SquadSlot, cash_now: int | None) -> bool:
+        """En el momento de pagar: ¿algo impide hacerlo por el importe autorizado? Si sí, lo
+        cuenta y devuelve True (no se paga)."""
+        if fresh.clause != amount:
+            notify.send_telegram(
+                s, f"🚫 {b('No he comprado')} a {b(name)}\nLlegó el desbloqueo con la cláusula en "
+                   f"{b(service.m(fresh.clause))}, distinta de los {service.m(amount)} que autorizaste. "
+                   f"{i('No pago un importe que no has confirmado.')}",
+            )
+            return True
+        if cash_now is not None and amount > cash_now:
+            notify.send_telegram(
+                s, f"🚫 {b('No he comprado')} a {b(name)}\nTu saldo ({service.m(cash_now)}) no llega a "
+                   f"{service.m(amount)}; no se puede pagar una cláusula endeudándose.",
+            )
+            return True
+        return False
+
+    ptid = slot.player_team_id
     counter_id = None
     last_edit = 0.0
+    next_check = time.time() + CHECK_EVERY
     prefetched = False
+    latest = slot
     if fire_at is not None:
         while (left := (fire_at - now()).total_seconds()) > 0:
-            if not prefetched and left <= PREFETCH_AT:
-                prefetched = True
-                fresh = _fresh(fast, world, slot.owner_team_id, owner, player_id)
-                _, _, cash_now = service.resolve_league(fast, s)
+            if (not prefetched and left <= PREFETCH_AT) or (left > PREFETCH_AT + 5 and time.time() >= next_check):
+                prefetched = prefetched or left <= PREFETCH_AT
+                next_check = time.time() + CHECK_EVERY
+                fresh = check()
                 if fresh is None:
-                    notify.send_telegram(s, f"❌ {b('Cancelada')}\n{b(name)} ya no está con {esc(owner)}.")
+                    if counter_id is not None:
+                        notify.edit_message(s, counter_id, "❌ Compra armada sin efecto.")
+                    gone()
                     return
-                if fresh.clause > cap:
-                    notify.send_telegram(
-                        s, f"❌ {b('Cancelada')}\n{esc(owner)} ha subido la cláusula de {b(name)} a "
-                           f"{service.m(fresh.clause)} (mi tope era {service.m(cap)}).",
-                    )
-                    return
-                if cash_now is not None and fresh.clause > cash_now:
-                    notify.send_telegram(
-                        s, f"❌ {b('Cancelada')}\nTu saldo ({service.m(cash_now)}) ya no llega a la cláusula "
-                           f"({service.m(fresh.clause)}).",
-                    )
-                    return
-                ptid, amount = fresh.player_team_id, fresh.clause
+                latest = fresh
             if left <= COUNTDOWN_FROM:
                 if counter_id is None or time.time() - last_edit >= COUNTDOWN_STEP - 0.5:
-                    text = f"⏱️ {tag}{b(name)}: {int(left)} s para el desbloqueo · cláusula {service.m(amount)} 🎯 armada"
+                    text = f"⏱️ {tag}{b(name)}: {int(left)} s para el desbloqueo · {service.m(amount)} 🎯 armada"
                     if counter_id is None:
                         counter_id = notify.send_message(s, text)
                     else:
@@ -210,19 +319,25 @@ def run(api: FantasyAPI, s: Settings, player_id: str, dry: bool = False, unlock_
                     last_edit = time.time()
                 time.sleep(min(0.5, max(0.02, left - 0.05)))
             else:
-                time.sleep(min(1.0, max(0.05, left - COUNTDOWN_FROM)))
+                time.sleep(min(1.0, max(0.05, left - COUNTDOWN_FROM), max(0.05, next_check - time.time())))
     else:
-        fresh = _fresh(fast, world, slot.owner_team_id, owner, player_id)
-        if fresh is None or fresh.clause > cap:
-            notify.send_telegram(s, f"❌ {b('Cancelada')}\nLa cláusula de {b(name)} ha cambiado o ya no está con {esc(owner)}.")
+        fresh = check()
+        if fresh is None:
+            gone()
             return
-        ptid, amount = fresh.player_team_id, fresh.clause
+        latest = fresh
+    # Última puerta antes de pagar: importe autorizado y saldo, con datos de hace segundos.
+    if refuse(latest, service.resolve_league(fast, s)[2]):
+        if counter_id is not None:
+            notify.edit_message(s, counter_id, "🚫 No he comprado: el importe ya no es el autorizado.")
+        return
     if counter_id is not None:
         notify.edit_message(s, counter_id, f"⚡ {b(name)}: ¡desbloqueada! Pagando {service.m(amount)}…")
 
-    # Disparo: se insiste cada RETRY_EVERY hasta que entra o pasa la ventana. Un error antes de
-    # tiempo (aún bloqueada) o de importe desactualizado (409) se reintenta; si un intento cuelga
-    # o el jugador ya aparece en tu plantilla, se da por pagado sin volver a pagar.
+    # Disparo: se insiste cada RETRY_EVERY hasta que entra o pasa la ventana, SIEMPRE por el mismo
+    # importe. Un error antes de tiempo (aún bloqueada) se reintenta; un 409 ("importe no
+    # actualizado") significa que el dueño cambió la cláusula: se cancela y se pregunta; si un
+    # intento cuelga o el jugador ya aparece en tu plantilla, se da por pagado sin volver a pagar.
     started = now()
     deadline = started + FIRE_WINDOW
     last_error = ""
@@ -236,14 +351,13 @@ def run(api: FantasyAPI, s: Settings, player_id: str, dry: bool = False, unlock_
             paid = True
         except HttpError as exc:
             last_error = str(exc)
-            if exc.status == 409:  # "Buyout wanted to pay is not updated": la cláusula cambió
-                fresh = _fresh(fast, world, slot.owner_team_id, owner, player_id)
+            if exc.status == 409:  # "importe no actualizado": el dueño cambió la cláusula
+                fresh = check()
                 if fresh is None:
-                    break
-                if fresh.clause > cap:
-                    last_error = f"la cláusula subió a {service.m(fresh.clause)}, por encima de mi tope"
-                    break
-                ptid, amount = fresh.player_team_id, fresh.clause
+                    gone()
+                    return
+                if refuse(fresh, None):
+                    return
             time.sleep(RETRY_EVERY)
         except Exception as exc:  # cuelgue de red: puede haberse pagado igualmente
             last_error = str(exc)

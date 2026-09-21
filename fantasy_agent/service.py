@@ -626,7 +626,7 @@ def unlocks_report(world: World, hours: int = 24) -> tuple[str, dict | None]:
             f"{b(when)} · {b(p.name)} <i>{esc(sl.owner_name)}</i> · cláusula {b(m(sl.clause))}{ratio} · {p.avg_points:.1f} pts/partido"
         )
         if until - now <= timedelta(hours=MAX_ARM_HOURS):
-            rows.append(_arm_row(p.name, p.id, until))
+            rows.append(_arm_row(p.name, p.id, until, sl.clause))
     head = f"{b('🔓 Próximos desbloqueos de cláusula')}\n{i(f'Próximas {hours} h, al segundo. Botón solo si faltan menos de 5 h 45 min.')}"
     return head + "\n\n" + "\n".join(cards), _keyboard(rows)
 
@@ -870,10 +870,13 @@ def _clause_keyboard(player_id: str) -> dict:
     return {"inline_keyboard": [[{"text": "💳 Pagar cláusula", "callback_data": f"c:{player_id}"}]]}
 
 
-def _arm_row(name: str, player_id: str, unlock: datetime) -> list[dict]:
+def _arm_row(name: str, player_id: str, unlock: datetime, clause: int) -> list[dict]:
     """Botón de comprar la cláusula EN EL SEGUNDO en que se desbloquea (ver `clause_snipe`):
-    "a:<player_id>". La hora va en el texto para que se vea a qué instante te comprometes."""
-    return _action_row(f"🎯 Comprar {name} al desbloquearse ({unlock.strftime('%H:%M:%S')})", f"a:{player_id}")
+    "a:<player_id>:<importe>". La hora y el importe van en el texto y en el código, para que
+    lo que confirmas sea exactamente lo que se paga: si el dueño cambia el importe, no se paga."""
+    return _action_row(
+        f"🎯 Comprar {name} al desbloquearse ({unlock.strftime('%H:%M:%S')}) por {m(clause)}", f"a:{player_id}:{clause}",
+    )
 
 
 def alert_keyboard(slot: models.SquadSlot, kind: str, now: datetime) -> dict | None:
@@ -883,7 +886,7 @@ def alert_keyboard(slot: models.SquadSlot, kind: str, now: datetime) -> dict | N
         return _clause_keyboard(slot.player.id)
     until = slot.clause_locked_until
     if kind == "unlock_soon" and until and timedelta(0) < until - now <= timedelta(hours=MAX_ARM_HOURS):
-        return _keyboard([_arm_row(slot.player.name, slot.player.id, until)])
+        return _keyboard([_arm_row(slot.player.name, slot.player.id, until, slot.clause)])
     return None
 
 

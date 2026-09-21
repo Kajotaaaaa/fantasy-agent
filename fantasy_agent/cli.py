@@ -357,14 +357,24 @@ def cmd_clause_snipe(args, s) -> None:
     Código de acción "a:<player_id>". Como `execute-action`, no tiene vista previa."""
     if not notify.telegram_enabled(s):
         sys.exit("clause-snipe necesita Telegram configurado (informa del resultado por ahí)")
-    verb, _, player_id = args.action.partition(":")
-    if verb != "a" or not player_id.isdigit():
+    verb, player_id, *rest = args.action.split(":")
+    if verb != "a" or not player_id.isdigit() or (rest and not rest[0].isdigit()):
         sys.exit(f"Acción no reconocida: {args.action!r}")
     try:
-        clause_snipe.run(FantasyAPI(s), s, player_id, dry=args.dry, unlock_in=args.unlock_in)
+        clause_snipe.run(
+            FantasyAPI(s), s, player_id, expected=int(rest[0]) if rest else None, dry=args.dry, unlock_in=args.unlock_in,
+        )
     except Exception as exc:
         print(f"[error] {args.action}: {exc}")
         notify.send_telegram(s, f"❌ {service.b('No pude armar/ejecutar la compra')}\n{service.esc(str(exc)[:300])}")
+
+
+def cmd_simulate_clause(args, s) -> None:
+    """Manda por Telegram el SIMULACRO de los mensajes de la compra armada (aviso de "¿la dejas
+    comprada por exactamente X?" y aviso de cambio de importe). Datos de mentira, tu saldo real."""
+    if not notify.telegram_enabled(s):
+        sys.exit("simulate-clause necesita Telegram configurado")
+    clause_snipe.simulate(FantasyAPI(s), s)
 
 
 def cmd_set_webhook(args, s) -> None:
@@ -679,6 +689,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("player_id", help="id del jugador (el tuyo, puesto a la venta)")
     p.add_argument("--confirm", action="store_true", help="ejecuta de verdad; sin esto solo es vista previa")
     p.set_defaults(func=cmd_withdraw)
+
+    sub.add_parser(
+        "simulate-clause", help="Simulacro por Telegram de los avisos de compra de cláusula armada (no compra nada)",
+    ).set_defaults(func=cmd_simulate_clause)
 
     p = sub.add_parser("clause-snipe", help="Interno: espera al desbloqueo de una cláusula y la paga en ese segundo")
     p.add_argument("action", help='código de acción, p.ej. "a:2206"')

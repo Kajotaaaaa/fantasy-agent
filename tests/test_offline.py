@@ -207,11 +207,13 @@ class Tests(unittest.TestCase):
             kb["inline_keyboard"][0][0] for _, kb in messages
             if kb and kb["inline_keyboard"][0][0]["callback_data"].startswith("a:")
         ]
-        # Pepe tiene su cláusula bloqueada 5 h (< 5 h 45): se puede armar; el botón lleva la hora.
-        self.assertEqual([b["callback_data"] for b in armed], ["a:pepe3"])
-        self.assertIn("Comprar pepe-J3 al desbloquearse (", armed[0]["text"])
-
+        # Pepe tiene su cláusula bloqueada 5 h (< 5 h 45): se puede armar; el botón lleva la hora y
+        # el IMPORTE EXACTO (en el texto y en el código): lo que confirmas es lo que se paga.
         slot = next(sl for sl in world.rival_slots if sl.player.id == "pepe3")
+        self.assertEqual([b["callback_data"] for b in armed], [f"a:pepe3:{slot.clause}"])
+        self.assertIn("Comprar pepe-J3 al desbloquearse (", armed[0]["text"])
+        self.assertIn(f"por {service.m(slot.clause)}", armed[0]["text"])
+
         far = dc_replace(slot, clause_locked_until=NOW + timedelta(hours=8))
         self.assertIsNone(service.alert_keyboard(far, "unlock_soon", NOW))  # demasiado lejos para un trabajo de 6 h
         self.assertEqual(service.alert_keyboard(slot, "open_affordable", NOW)["inline_keyboard"][0][0]["callback_data"], "c:pepe3")
@@ -266,9 +268,19 @@ class Tests(unittest.TestCase):
             os.environ.pop("CLAUSE_WANTED") if env is None else os.environ.__setitem__("CLAUSE_WANTED", env)
         self.assertEqual(len(sent), 1)
         text, buttons = sent[0]
-        self.assertIn("se desbloquea a las", text)
+        self.assertIn("se le acaba el bloqueo de la cláusula a las", text)
         self.assertIn("Tu saldo", text)
-        self.assertEqual(buttons["inline_keyboard"][0][0]["callback_data"], "a:pepe3")
+        self.assertEqual(buttons["inline_keyboard"][0][0]["callback_data"], f"a:pepe3:{pepe3.clause}")
+        self.assertIn("EXACTAMENTE", text)
+
+        # Si el dueño cambia el importe: el armado SIGUE puesto (no se elimina) y se pregunta por el nuevo.
+        armed_text, armed_kb = cs.changed_message("Rodri", "Pepe", "9", 86_000_000, 92_000_000, now + timedelta(hours=2), 140_000_000)
+        self.assertIn("sigue puesta", armed_text)
+        self.assertIn("92.00M", armed_text)
+        self.assertEqual(armed_kb["inline_keyboard"][0][0]["callback_data"], "a:9:92000000")
+        # Si el cambio llegó ANTES de armar, no hay nada armado que mantener.
+        idle_text, _ = cs.changed_message("Rodri", "Pepe", "9", 86_000_000, 80_000_000, None, None, armed=False)
+        self.assertIn("No he armado nada", idle_text)
 
     def test_snipe_plan(self):
         from fantasy_agent import snipe
