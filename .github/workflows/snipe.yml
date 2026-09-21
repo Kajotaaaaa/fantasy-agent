@@ -1,8 +1,9 @@
 name: fantasy-snipe
 
 # Rebaja de último segundo (fantasy_agent/snipe.py). Lo dispara el cron del Worker de
-# Cloudflare a las 20:56 hora de España (repository_dispatch); el trabajo espera hasta 10 s
-# antes del cierre de las 21:00 (~5-6 min), así que sin grupo de concurrencia ni caché propia.
+# Cloudflare a las 20:50 hora de España (repository_dispatch); el trabajo espera hasta 10 s
+# antes del cierre de las 21:00 (~10 min: el margen absorbe lo que tarde GitHub en arrancar el
+# runner), así que sin grupo de concurrencia ni caché propia.
 # `workflow_dispatch` para lanzarlo a mano. SNIPE_MODE (variable del repositorio): `on` baja
 # de verdad; sin ella (o cualquier otra cosa) va en SOMBRA y solo cuenta lo que haría.
 on:
@@ -13,7 +14,7 @@ on:
 jobs:
   snipe:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 

@@ -9,7 +9,7 @@ lectura, y te lo lleve.
 Las pujas cierran a las 21:00:00 (dato del usuario); el `expirationDate` de la API marca 21:02
 (hora de proceso, ver CLAUDE.md), así que el cierre es `expirationDate - 2 min`. El trabajo lo
 lanza el Worker de Cloudflare (puntual al minuto; el cron de GitHub se retrasa minutos) a las
-20:56, espera hasta 10 s antes del cierre, lee el mercado y actúa.
+20:50, espera hasta 10 s antes del cierre, lee el mercado y actúa.
 
 `SNIPE_MODE`: `on` baja de verdad; cualquier otra cosa (por defecto `shadow`) solo cuenta lo que
 haría. Además de decidir, toma lecturas a T-30s, T-10s, T-3s, T+15s y T+90s para saber cómo se

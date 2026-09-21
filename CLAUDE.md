@@ -21,7 +21,8 @@ Idea del usuario: si al final de la subasta eres el ÚNICO que ha pujado, no hac
 más que el mínimo válido. El anuncio trae `numberOfBids` y tu `bid`: con `numberOfBids == 1` y
 tu puja, nadie más compite. Solo BAJA (`api.update_bid`), nunca sube: no puede hacerte gastar
 más; riesgo = que alguien puje en el último segundo tras la lectura.
-- Cadena: cron del Worker de Cloudflare (`wrangler.toml`, 20:56 hora de España, dos crons por
+- Cadena: cron del Worker de Cloudflare (`wrangler.toml`, 20:50 hora de España — 10 min antes del
+  cierre, para que el retraso de GitHub en arrancar el runner no nos deje fuera —, dos crons por
   el cambio de hora; puntual al minuto, el cron de GitHub se retrasa minutos) -> `repository_dispatch`
   `fantasy-snipe` -> `.github/workflows/snipe.yml` -> `python -m fantasy_agent snipe`: espera
   hasta T-10s del cierre (`expirationDate - 2 min`, ver "Cierre de las pujas"), lee el mercado

@@ -44,7 +44,7 @@ const dispatch = (env, event_type, client_payload) =>
   });
 
 export default {
-  // Cron (wrangler.toml): a las 20:56 hora de España lanza la rebaja de último segundo
+  // Cron (wrangler.toml): a las 20:50 hora de España lanza la rebaja de último segundo
   // (workflow snipe.yml). El cron de GitHub se retrasa minutos; el de Cloudflare es puntual.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(dispatch(env, "fantasy-snipe", {}));
