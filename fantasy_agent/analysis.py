@@ -590,6 +590,26 @@ def speculative_clause_alerts(
     return alerts
 
 
+def sell_candidates(
+    my_slots: list[SquadSlot],
+    buy_prices: dict[str, int],
+    trends: dict[str, Trend],
+) -> list[SquadSlot]:
+    """Candidatos a poner a la venta: el disparador es la TENDENCIA (d1 y d3 negativos, lleva
+    cayendo estos últimos días), no cuánto has perdido ya. Si compraste caro como apuesta
+    especulativa pero la racha de subida sigue viva (d3 positivo), no entra aquí aunque el
+    valor actual siga por debajo de lo pagado — la apuesta puede seguir siendo buena. Solo
+    cubre jugadores con precio de compra conocido (`buy_prices`, de `my_transactions`)."""
+    out = []
+    for slot in my_slots:
+        if slot.player.id not in buy_prices:
+            continue
+        trend = trends.get(slot.player.id)
+        if trend and trend.d1 < 0 and trend.d3 < 0:
+            out.append(slot)
+    return out
+
+
 def loss_cut_candidates(
     my_slots: list[SquadSlot],
     buy_prices: dict[str, int],

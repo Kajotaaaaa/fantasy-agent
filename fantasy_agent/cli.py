@@ -201,7 +201,7 @@ def cmd_withdraw(args, s) -> None:
 
 def cmd_section(args, s) -> None:
     api = FantasyAPI(s)
-    world = _world(api, s, trends=args.cmd in ("market", "trends", "report", "losses", "market-news"))
+    world = _world(api, s, trends=args.cmd in ("market", "trends", "report", "losses", "sell-candidates", "market-news"))
     if args.cmd in ("clauses", "clauses-hot", "report"):
         service.ensure_clause_trends(api, world, s)
         service.ensure_speculative_trends(api, world, s)
@@ -213,7 +213,7 @@ def cmd_section(args, s) -> None:
         news_targets += service.clause_titularidad_candidates(world, s)
     news = estimate_titularidad(api, news_targets) if news_targets else None
 
-    store = Store(s.db_file) if args.cmd in ("report", "losses", "market-news") else None
+    store = Store(s.db_file) if args.cmd in ("report", "losses", "sell-candidates", "market-news") else None
 
     rival_cash = {}
     if args.cmd in ("rivals", "clause-risk"):
@@ -234,6 +234,7 @@ def cmd_section(args, s) -> None:
         "clause-risk": lambda: service.clause_theft_report(world, rival_cash) or "Ningún rival te llega ahora mismo.",
         "lineup": lambda: service.lineup_report(world, news),
         "losses": lambda: service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.",
+        "sell-candidates": lambda: service.sell_candidates_report(world, store) or "Nadie con tendencia bajando ahora mismo.",
         "market-news": lambda: service.market_arrivals_report(world, store) or "Nada nuevo desde el último estudio.",
     }[args.cmd]()
     _out(s, text, args.telegram)
@@ -365,6 +366,7 @@ def main(argv: list[str] | None = None) -> None:
         ("clause-risk", "Tus jugadores que algún rival podría pagarte de cláusula (saldo estimado)"),
         ("lineup", "Once recomendado"),
         ("losses", "Jugadores tuyos por debajo de lo que pagaste"),
+        ("sell-candidates", "Candidatos a vender: tendencia bajando 3 días"),
         ("market-news", "Nuevo en el mercado desde el último estudio, con veredicto"),
         ("report", "Informe completo"),
     ]:

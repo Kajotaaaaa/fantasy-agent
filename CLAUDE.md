@@ -9,6 +9,16 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   todas siguen el patrón vista-previa-por-defecto + `--confirm` para ejecutar de verdad, y
   nunca se deben disparar automáticamente sin que el usuario apruebe esa operación concreta.
 
+## Cuándo vender: tendencia, no cuánto has perdido ya
+`analysis.sell_candidates`/`service.sell_candidates_report` (comando `sell-candidates`, y en
+el informe diario): el disparador para poner algo a la venta es que la tendencia lleve
+bajando (`d1 < 0` y `d3 < 0`), NO la magnitud de la pérdida acumulada frente a lo pagado —
+eso ya lo cubre "corta pérdidas" (`loss_cut_candidates`), que es un umbral distinto (≥8%) y
+un propósito distinto (avisar de pérdida seria, no decidir el momento de vender). Un jugador
+comprado caro como apuesta especulativa (cláusula por encima de mercado) que sigue subiendo
+NO es candidato aunque siga por debajo de lo pagado — la apuesta puede seguir siendo buena
+(caso real: Yoel Lago, cláusula pagada con pérdida bruta pero d3 +22%, excluido a propósito).
+
 ## Escritura (pujar, cláusula, venta) — verificado contra cuenta real
 Endpoints sin documentar oficialmente, localizados cruzando 3 proyectos independientes de la
 comunidad (mismo prefijo `/v1/competition/1` que usamos nosotros) y verificados uno a uno

@@ -362,6 +362,30 @@ def losing_positions_report(world: World, store) -> str:
     return f"{b('🔻 Corta pérdidas')}\n{i('Por debajo de lo que pagaste')}\n\n" + "\n\n".join(cards)
 
 
+def sell_candidates_report(world: World, store) -> str:
+    """Candidatos a poner a la venta según tendencia (ver `analysis.sell_candidates`): lleva
+    bajando 3 días, sea cual sea la pérdida acumulada. Es un aviso, no ejecuta nada — pon a la
+    venta con el comando `sell` tras revisarlo."""
+    buy_prices = {pid: int(v) for pid, v in store.prefixed("buy_price:").items()}
+    trends = {pid: t for pid, (_, t) in world.trends.items()}
+    candidates = analysis.sell_candidates(world.my_slots, buy_prices, trends)
+    if not candidates:
+        return ""
+    cards = []
+    for slot in candidates:
+        p = slot.player
+        buy = buy_prices[p.id]
+        trend = trends[p.id]
+        diff_pct = (p.market_value - buy) / buy * 100 if buy else 0
+        cards.append(
+            f"{b(p.name)}\n"
+            f"Comprado por: {m(buy)} · Ahora: {m(p.market_value)} ({diff_pct:+.0f}%)\n"
+            f"{i(f'Bajando: {trend.d1:+.1f}% / 1d, {trend.d3:+.1f}% / 3d')}"
+        )
+    head = f"{b('📉 Candidatos a vender')}\n{i('Tendencia bajando 3 días — no esperar a que caiga más')}"
+    return head + "\n\n" + "\n\n".join(cards)
+
+
 def rivals_report(world: World, rival_cash: dict[str, int] | None = None) -> str:
     lines = [b("👥 Rivales")]
     by_owner: dict[str, list[models.SquadSlot]] = {}
@@ -651,6 +675,9 @@ def report_sections(
         losing = losing_positions_report(world, store)
         if losing:
             market_parts.append(losing)
+        selling = sell_candidates_report(world, store)
+        if selling:
+            market_parts.append(selling)
     if market_parts:
         sections.append("\n\n".join(market_parts))
 
