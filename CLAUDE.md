@@ -53,6 +53,14 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   runner de GitHub Actions va en UTC) — nunca compares horas de juego con `datetime.now()` a
   secas.
 
+## Rentabilidad de cláusula: contra lo que pagas, no contra el valor de mercado
+`clause_verdict` proyecta el valor de mercado a 14 días (`project_value`) pero mide la
+ganancia contra `price` (lo que de verdad pagas por la cláusula), no contra el valor de
+mercado — si pagas por encima de mercado (ratio > 1, como Mbappé a 200 con mercado en 140) la
+ganancia real es menor que comparar contra mercado; si es una ganga (ratio < 1) es mayor.
+Antes de este fix se comparaba contra el valor de mercado, lo que infla la rentabilidad
+aparente de cualquier cláusula pagada por encima de mercado.
+
 ## Tendencias: 7 días puede ser una racha ya muerta
 `analysis.Trend` compara el ritmo de 7 días contra el de 3: `cooling` = subió a 7d pero el
 corto plazo ya no lo confirma (racha vieja, no pagues de más por ella); `recovering` = al

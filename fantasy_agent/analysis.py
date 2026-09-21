@@ -295,6 +295,7 @@ def clause_candidate_players(
 
 def clause_verdict(
     p: Player,
+    price: int,
     ratio: float,
     trend: Trend | None,
     news: dict | None,
@@ -363,15 +364,23 @@ def clause_verdict(
     else:
         reasons.append("Sin noticias de hoy contrastadas para este jugador")
 
-    if p.market_value:
+    if p.market_value and price:
+        # Ojo: la proyección parte del valor de mercado (lo que de verdad va a evolucionar),
+        # pero la ganancia se mide contra `price` — lo que realmente pagas por la cláusula—,
+        # no contra el valor de mercado. Si pagas por encima de mercado (ratio > 1) esto da
+        # una ganancia real menor que comparar contra el valor de mercado; si es una ganga
+        # (ratio < 1), da una ganancia mayor. Es la pregunta real: "¿recupero lo invertido?".
         proj = project_value(p.market_value, trend, 14)
-        gain_pct = (proj - p.market_value) / p.market_value * 100
+        gain_pct = (proj - price) / price * 100
         if gain_pct >= 10:
             points += 1.0
-            reasons.append(f"Buen potencial de reventa: ~{_fmt_m(proj)} en 14 días ({gain_pct:+.0f}%)")
+            reasons.append(f"Rentable de verdad: pagas {_fmt_m(price)}, ~{_fmt_m(proj)} en 14 días ({gain_pct:+.0f}% sobre lo pagado)")
         elif gain_pct >= 3:
             points += 0.5
-            reasons.append(f"Algo de potencial de reventa a 14 días (~{gain_pct:+.0f}%)")
+            reasons.append(f"Algo de margen sobre lo pagado a 14 días (~{gain_pct:+.0f}%)")
+        elif gain_pct < 0:
+            points -= 0.5
+            reasons.append(f"⚠️ Al ritmo actual no recuperarías lo pagado en 14 días (~{_fmt_m(proj)} vs {_fmt_m(price)} pagados)")
 
     if points >= 5.5:
         stars, label = 4, "🔥 Clausúrale ya"
@@ -417,7 +426,7 @@ def clause_alerts(
         else:
             continue
 
-        stars, label, reasons = clause_verdict(p, ratio, trends.get(p.id), news.get(p.id))
+        stars, label, reasons = clause_verdict(p, slot.clause, ratio, trends.get(p.id), news.get(p.id))
         stars_str = "★" * stars + "☆" * (4 - stars)
         motivos = "\n".join(f"• {esc(r)}" for r in reasons)
         alerts.append(ClauseAlert(
