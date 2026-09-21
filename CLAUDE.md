@@ -3,9 +3,38 @@
 Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estándar**.
 
 ## Reglas del proyecto
-- **SOLO LECTURA.** No añadir llamadas que modifiquen el juego (pujas, ventas, cláusulas,
-  alineación) salvo que el usuario lo pida explícitamente, y en ese caso siempre con
-  confirmación previa por operación.
+- **SOLO LECTURA por defecto.** No añadir llamadas que modifiquen el juego salvo que el
+  usuario lo pida explícitamente, y en ese caso siempre con confirmación previa por operación.
+  Ya existen escrituras verificadas contra la cuenta real (ver sección "Escritura" abajo):
+  todas siguen el patrón vista-previa-por-defecto + `--confirm` para ejecutar de verdad, y
+  nunca se deben disparar automáticamente sin que el usuario apruebe esa operación concreta.
+
+## Escritura (pujar, cláusula, venta) — verificado contra cuenta real
+Endpoints sin documentar oficialmente, localizados cruzando 3 proyectos independientes de la
+comunidad (mismo prefijo `/v1/competition/1` que usamos nosotros) y verificados uno a uno
+contra la liga real de producción:
+- **Pujar**: `POST /league/{league_id}/market/{market_id}/bid`, body `{"money": cantidad}`.
+  Verificado: queda `status: "pending"`, el saldo NO baja al instante (se resuelve más tarde).
+- **Pagar cláusula**: `POST /league/{league_id}/buyout/{playerTeamId}/pay`, body
+  `{"buyoutClauseToPay": cantidad}`. Verificado: instantáneo, saldo baja al momento. Ojo:
+  usa `playerTeamId` (el hueco de plantilla, campo `SquadSlot.player_team_id`), NO el id
+  genérico del jugador — con el id equivocado da un 409 "Buyout wanted to pay is not updated"
+  que parece un problema de datos desactualizados pero es la identidad equivocada.
+- **Poner a la venta**: `POST /league/{league_id}/market/sell`, body
+  `{"playerId": playerTeamId, "salePrice": precio}`. Verificado: no cobra nada al instante,
+  el juego genera ofertas (±5% del valor de mercado) en cada ciclo de mercado (21:00) durante
+  unos días hasta que se acepta/rechaza/retira.
+- **Retirar del mercado**: `DELETE /league/{league_id}/market/{market_id}/delete`, sin body.
+  Verificado.
+- **Leer ofertas pendientes**: `GET /league/{league_id}/playerTeam/{playerTeamId}/offer`
+  (solo lectura). Forma de la respuesta SIN verificar todavía (nunca hemos visto una oferta
+  real) — probar contra un jugador puesto a la venta antes de fiarse del parseo.
+- **Aceptar/rechazar oferta**: `POST .../market/{market_id}/offer/{offer_id}/accept` (body
+  `{"offerMoney": cantidad}`) / `.../reject` (sin body). SIN verificar todavía.
+- Todas estas viven en `api.py` bajo `_write()` (sin reintentos — reintentar una escritura
+  financiera tras un timeout podría duplicarla) y tienen su comando de prueba en `cli.py`
+  (`bid`, `clause`, `sell`, `withdraw`, `offers`) con vista previa por defecto y `--confirm`
+  para ejecutar de verdad.
 - La API de LaLiga Fantasy NO es pública ni documentada. Rutas y campos vienen de
   ingeniería inversa de la comunidad y pueden cambiar. Antes de tocar `models.py`,
   mira el JSON real con `python -m fantasy_agent probe <ruta>`.

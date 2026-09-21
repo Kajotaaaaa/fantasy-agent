@@ -127,6 +127,7 @@ class SquadSlot:
     clause: int
     clause_locked_until: datetime | None
     shielded_until: datetime | None = None
+    player_team_id: str = ""  # id del hueco de plantilla (para pagar la cláusula), no el del jugador
 
     def clause_open(self, now: datetime) -> bool:
         if self.clause <= 0:
@@ -150,6 +151,7 @@ def parse_squad(team_payload: dict, team_id: str, owner_name: str) -> list[Squad
                 clause=to_int(pick(item, "buyoutClause", "clause")),
                 clause_locked_until=parse_dt(pick(item, "buyoutClauseLockedEndTime")),
                 shielded_until=parse_dt(pick(item, "shieldedEndDate")) if shielded else None,
+                player_team_id=str(pick(item, "playerTeamId", default="")),
             )
         )
     return slots
@@ -184,6 +186,7 @@ def parse_standing(payload: Any) -> list[TeamStanding]:
 
 @dataclass
 class MarketItem:
+    listing_id: str  # id del anuncio (para pujar), distinto del id del jugador
     player: Player
     price: int
     expires: datetime | None
@@ -197,6 +200,7 @@ def parse_market(payload: Any) -> list[MarketItem]:
         seller = pick(item, "sellerTeam.manager.managerName", "sellerTeam.name", default=None)
         items.append(
             MarketItem(
+                listing_id=str(pick(item, "id", default="")),
                 player=parse_player(item),
                 price=to_int(pick(item, "salePrice", "price")),
                 expires=parse_dt(pick(item, "expirationDate", "expirationTime")),

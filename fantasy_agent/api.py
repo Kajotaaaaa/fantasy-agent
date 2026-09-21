@@ -77,3 +77,53 @@ class FantasyAPI:
 
     def clear_cache(self) -> None:
         self._cache.clear()
+
+    # --- escritura: gasta saldo real, SIEMPRE con confirmación previa del usuario ----------
+    # Rutas sin documentar oficialmente; verificadas por coincidencia entre dos proyectos
+    # independientes de la comunidad (mismo prefijo /v1/competition/1 que usamos nosotros),
+    # pero no probadas todavía contra una cuenta real. Sin reintentos (retries=0): reintentar
+    # una escritura financiera tras un timeout podría duplicar la operación.
+    def _write(self, method: str, path: str, body: dict | None) -> Any:
+        wait = self.s.request_delay_s - (time.time() - self._last_call)
+        if wait > 0:
+            time.sleep(wait)
+        headers = {"x-lang": "es", "x-app": "Fantasy", "Authorization": f"Bearer {auth.bearer(self.s)}"}
+        result = request_json(method, BASE + path, headers=headers, json_body=body, retries=0)
+        self._last_call = time.time()
+        return result
+
+    def bid(self, league_id: str, market_id: str, amount: int) -> Any:
+        """Puja por un anuncio del mercado de LaLiga. IRREVERSIBLE. Verificado: queda con
+        estado "pending", el dinero no baja al instante (se resuelve más tarde)."""
+        return self._write("POST", f"{COMP}/league/{league_id}/market/{market_id}/bid", {"money": amount})
+
+    def pay_clause(self, league_id: str, player_team_id: str, amount: int) -> Any:
+        """Paga la cláusula de un jugador de otro manager. IRREVERSIBLE, instantáneo.
+        Verificado: usa el id del hueco de plantilla (`playerTeamId`), no el id del jugador."""
+        return self._write("POST", f"{COMP}/league/{league_id}/buyout/{player_team_id}/pay", {"buyoutClauseToPay": amount})
+
+    def player_offers(self, league_id: str, player_team_id: str) -> Any:
+        """Ofertas pendientes sobre un jugador tuyo (solo aparecen si lo has puesto a la
+        venta). Solo lectura. Forma exacta sin verificar todavía — no hay ninguno listado
+        para probarlo en real."""
+        return self.get(f"{COMP}/league/{league_id}/playerTeam/{player_team_id}/offer")
+
+    def list_for_sale(self, league_id: str, player_team_id: str, price: int) -> Any:
+        """Pone un jugador tuyo a la venta. IRREVERSIBLE en el sentido de que empieza a
+        recibir ofertas del juego en cada ciclo de mercado (21:00) hasta que aceptes,
+        rechaces, o lo retires. No verificado todavía contra una cuenta real."""
+        return self._write("POST", f"{COMP}/league/{league_id}/market/sell", {"playerId": player_team_id, "salePrice": price})
+
+    def accept_offer(self, league_id: str, market_id: str, offer_id: str, amount: int) -> Any:
+        """Acepta una oferta recibida por un jugador puesto a la venta. IRREVERSIBLE, gasta
+        saldo cero pero CIERRA la venta. No verificado todavía."""
+        return self._write("POST", f"{COMP}/league/{league_id}/market/{market_id}/offer/{offer_id}/accept", {"offerMoney": amount})
+
+    def reject_offer(self, league_id: str, market_id: str, offer_id: str) -> Any:
+        """Rechaza una oferta. No verificado todavía."""
+        return self._write("POST", f"{COMP}/league/{league_id}/market/{market_id}/offer/{offer_id}/reject", None)
+
+    def withdraw_from_market(self, league_id: str, market_id: str) -> Any:
+        """Retira un anuncio tuyo del mercado (deja de estar a la venta). No verificado
+        todavía contra una cuenta real."""
+        return self._write("DELETE", f"{COMP}/league/{league_id}/market/{market_id}/delete", None)
