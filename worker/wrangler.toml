@@ -1,0 +1,3 @@
+name = "fantasy-agent-telegram"
+main = "telegram-webhook.js"
+compatibility_date = "2025-01-01"

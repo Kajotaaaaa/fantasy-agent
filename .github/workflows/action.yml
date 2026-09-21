@@ -1,0 +1,58 @@
+name: fantasy-action
+
+# Lo dispara el Cloudflare Worker (worker/telegram-webhook.js) cuando pulsas "Sí, pagar" en
+# Telegram. Comparte grupo de concurrencia con `fantasy-watch` para no pisar la sesión/estado
+# en caché a la vez que un tick.
+on:
+  repository_dispatch:
+    types: [fantasy-action]
+
+concurrency:
+  group: fantasy-watch
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restaurar estado (sesión + dedupe de alertas)
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: fantasy-state-${{ github.run_id }}
+          restore-keys: |
+            fantasy-state-
+
+      - name: Sembrar sesión inicial si no hay caché todavía
+        run: |
+          mkdir -p data
+          if [ ! -s data/tokens.json ] && [ -n "$FANTASY_TOKENS_JSON" ]; then
+            echo "$FANTASY_TOKENS_JSON" > data/tokens.json
+          fi
+        env:
+          FANTASY_TOKENS_JSON: ${{ secrets.FANTASY_TOKENS_JSON }}
+
+      # La acción llega por variable de entorno, no interpolada en el script: así un payload
+      # raro no puede inyectar comandos de shell.
+      - name: fantasy execute-action
+        run: python -m fantasy_agent execute-action "$FANTASY_ACTION"
+        env:
+          FANTASY_ACTION: ${{ github.event.client_payload.action }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FANTASY_LEAGUE_ID: ${{ secrets.FANTASY_LEAGUE_ID }}
+          FANTASY_TEAM_ID: ${{ secrets.FANTASY_TEAM_ID }}
+
+      - name: Guardar estado actualizado
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: fantasy-state-${{ github.run_id }}

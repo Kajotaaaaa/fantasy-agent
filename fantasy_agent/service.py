@@ -513,9 +513,18 @@ def clause_titularidad_candidates(world: World, s: Settings) -> list[models.Play
     return analysis.clause_candidate_players(world.rival_slots, now, s.clause_window_hours)
 
 
-def clauses_report(world: World, s: Settings, news: dict[str, dict] | None = None) -> tuple[list[str], list[analysis.ClauseAlert]]:
+def _clause_keyboard(player_id: str) -> dict:
+    """Teclado con el botón de pagar cláusula. `callback_data` lleva el código de acción que
+    entiende `cli.cmd_execute_action` (ver CLAUDE.md, sección de botones): "c:<player_id>"."""
+    return {"inline_keyboard": [[{"text": "💳 Pagar cláusula", "callback_data": f"c:{player_id}"}]]}
+
+
+def clauses_report(
+    world: World, s: Settings, news: dict[str, dict] | None = None,
+) -> tuple[list[tuple[str, dict | None]], list[analysis.ClauseAlert]]:
     """Un mensaje de Telegram por cláusula, no todas juntas en un tocho — así cada jugador
-    puede llevar más adelante sus propios botones de acción (pagar / ignorar)."""
+    lleva su propio botón de "pagar cláusula" (solo si es pagable ya; los avisos de "se libera
+    en Xh" no llevan botón, todavía no se puede)."""
     now = datetime.now(timezone.utc)
     trends = {pid: t for pid, (_, t) in world.trends.items()}
     alerts = analysis.clause_alerts(
@@ -528,10 +537,13 @@ def clauses_report(world: World, s: Settings, news: dict[str, dict] | None = Non
         frozen_note = i(f"⏸️ Cláusulas congeladas hasta las {until} (empieza la jornada)")
     if not alerts:
         head = f"{b('🔐 Cláusulas')}\n{i(f'Nada relevante en las próximas {s.clause_window_hours}h')}"
-        return [head + (("\n\n" + frozen_note) if frozen_note else "")], alerts
-    messages = [f"🔐 {a.message}" for a in alerts]
+        return [(head + (("\n\n" + frozen_note) if frozen_note else ""), None)], alerts
+    messages = [
+        (f"🔐 {a.message}", _clause_keyboard(a.slot.player.id) if a.kind == "open_affordable" else None)
+        for a in alerts
+    ]
     if frozen_note:
-        messages.append(frozen_note)
+        messages.append((frozen_note, None))
     return messages, alerts
 
 
@@ -549,8 +561,12 @@ def ensure_speculative_trends(api: FantasyAPI, world: World, s: Settings) -> Non
             print(f"[aviso] sin histórico para {p.name}: {exc}")
 
 
-def speculative_clauses_report(world: World, s: Settings) -> tuple[list[str], list[analysis.SpeculativeAlert]]:
-    """Igual que `clauses_report`: un mensaje por jugador, no todos juntos."""
+def speculative_clauses_report(
+    world: World, s: Settings,
+) -> tuple[list[tuple[str, dict | None]], list[analysis.SpeculativeAlert]]:
+    """Igual que `clauses_report`: un mensaje por jugador, no todos juntos. Los candidatos que
+    llegan aquí ya están filtrados a cláusula pagable ahora (ver
+    `analysis.speculative_clause_candidates`), así que todos llevan botón."""
     now = datetime.now(timezone.utc)
     trends = {pid: t for pid, (_, t) in world.trends.items()}
     alerts = analysis.speculative_clause_alerts(
@@ -558,7 +574,7 @@ def speculative_clauses_report(world: World, s: Settings) -> tuple[list[str], li
     )
     if not alerts:
         return [], alerts
-    return [f"📈 {a.message}" for a in alerts], alerts
+    return [(f"📈 {a.message}", _clause_keyboard(a.slot.player.id)) for a in alerts], alerts
 
 
 def _player_name(api: FantasyAPI, world: World, player_id: str) -> str:
@@ -706,15 +722,18 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
 
 def report_sections(
     world: World, s: Settings, news: dict[str, dict] | None, store=None, rival_cash: dict[str, int] | None = None,
-) -> list[str]:
+) -> list[tuple[str, dict | None]]:
     """Un mensaje por especialidad (alineación / mercado / cláusulas...), listo para Telegram.
-    Las cláusulas van una por mensaje (ver `clauses_report`), no agrupadas. Omite lo que no
-    tenga nada relevante que decir, para no mandar un tocho. `store` es opcional: sin él no se
-    puede saber qué pagaste por tus jugadores, así que se omite la sección de corta-pérdidas.
-    `rival_cash` opcional: sin él se omiten el riesgo de que te clausulen y el saldo de
-    rivales (requieren el historial completo de movimientos, más caro de pedir)."""
+    Cada entrada es (texto, teclado_o_None) — solo las cláusulas llevan botón. Las cláusulas
+    van una por mensaje (ver `clauses_report`), no agrupadas. Omite lo que no tenga nada
+    relevante que decir, para no mandar un tocho. `store` es opcional: sin él no se puede saber
+    qué pagaste por tus jugadores, así que se omite la sección de corta-pérdidas. `rival_cash`
+    opcional: sin él se omiten el riesgo de que te clausulen y el saldo de rivales (requieren
+    el historial completo de movimientos, más caro de pedir)."""
     stamp = world.fetched_at.astimezone().strftime("%d/%m/%Y %H:%M")
-    sections = [f"{b('⚽ Informe')}\n{i(stamp)}\n\n{lineup_report(world, news)}"]
+    sections: list[tuple[str, dict | None]] = [
+        (f"{b('⚽ Informe')}\n{i(stamp)}\n\n{lineup_report(world, news)}", None)
+    ]
 
     market_parts = [p for p in (market_report(world), investment_report(world), trends_report(world)) if p]
     if store is not None:
@@ -725,7 +744,7 @@ def report_sections(
         if selling:
             market_parts.append(selling)
     if market_parts:
-        sections.append("\n\n".join(market_parts))
+        sections.append(("\n\n".join(market_parts), None))
 
     clause_messages, alerts = clauses_report(world, s, news)
     if alerts:
@@ -734,12 +753,12 @@ def report_sections(
     if rival_cash:
         theft = clause_theft_report(world, rival_cash)
         if theft:
-            sections.append(theft)
-        sections.append(rivals_report(world, rival_cash))
+            sections.append((theft, None))
+        sections.append((rivals_report(world, rival_cash), None))
 
-    sections.append(daily_advice_report(world, rival_cash))
+    sections.append((daily_advice_report(world, rival_cash), None))
     return sections
 
 
 def full_report(world: World, s: Settings, news: dict[str, dict] | None) -> str:
-    return "\n\n".join(report_sections(world, s, news))
+    return "\n\n".join(text for text, _ in report_sections(world, s, news))

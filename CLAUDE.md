@@ -184,6 +184,35 @@ de la versión premium del juego y esta liga no la tiene — se eliminó por com
 tip relacionado en `STRATEGY_TIPS`). Si algún día hay premium de por medio, revisar el
 historial de git antes de reconstruirlo desde cero.
 
+## Botones de Telegram (pagar cláusula) — webhook en tiempo real
+Elegido por el usuario: webhook (no sondeo). Cada alerta de cláusula pagable ya
+(`kind == "open_affordable"`, y todas las especulativas) lleva un botón "💳 Pagar cláusula".
+Los avisos "se libera en Xh" no llevan botón (aún no se puede pagar).
+```
+botón "c:<player_id>" → Worker cambia a [Sí, pagar "C:<id>"] [Cancelar "N:c:<id>"]
+"C:<id>" → Worker quita botones + repository_dispatch(fantasy-action, action="c:<id>")
+        → .github/workflows/action.yml → `python -m fantasy_agent execute-action "c:<id>"`
+        → cmd_execute_action relee la plantilla del rival SIN caché, paga con playerTeamId
+          y avisa por Telegram (✅ / ❌ con el motivo)
+```
+- El doble paso "¿Seguro?" vive en el Worker (`worker/telegram-webhook.js`); `execute-action` NO
+  tiene vista previa, por eso no debe lanzarse a mano sin saber qué código pasas.
+- Worker: solo atiende el `TELEGRAM_CHAT_ID` configurado, exige la cabecera secreta que Telegram
+  reenvía (`set-webhook`), y valida `payload` con regex antes de disparar nada. En el workflow
+  la acción entra por variable de entorno (no interpolada en el script) contra inyección.
+- `action.yml` comparte el grupo de concurrencia `fantasy-watch` con el tick: dos ejecuciones
+  a la vez podrían pisarse la sesión (los refresh tokens rotan). Coste conocido: si llegan a
+  la vez un tick y otro tick mientras hay una acción pendiente, GitHub cancela la pendiente
+  más antigua; sin confirmación de Telegram el usuario lo nota y la repite (no se mueve dinero).
+- Mensajes con botones: `report_sections`/`clauses_report` devuelven `(texto, teclado|None)`;
+  `notify.send_telegram(..., buttons=)` los adjunta (en mensajes troceados, solo al último).
+- Para añadir otra acción (pujar, vender, retirar): nueva entrada en `ACTIONS` del Worker, rama
+  nueva en `cmd_execute_action`, y botón en el mensaje correspondiente. Hoy solo existe `c`.
+- Puesta en marcha (lo hace el usuario, requiere sus cuentas): `cd worker && npx wrangler deploy`,
+  `npx wrangler secret put` de TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET,
+  GITHUB_TOKEN (PAT con permiso sobre el repo), GITHUB_REPO ("owner/repo"); luego
+  `python -m fantasy_agent set-webhook <url-del-worker> <mismo-secreto>`.
+
 ## Formato de los mensajes
 Los informes se mandan a Telegram con `parse_mode=HTML` (`notify.send_telegram`). Helpers en
 `analysis.py` (`b`, `i`, `esc`) para negrita/cursiva/escapado — reexportados desde `service.py`.

@@ -35,10 +35,10 @@ def _madrid_now() -> datetime:
     return utc_now.astimezone(timezone(timedelta(hours=offset)))
 
 
-def _out(settings, text: str, telegram: bool) -> None:
+def _out(settings, text: str, telegram: bool, buttons: dict | None = None) -> None:
     print(text)
     if telegram:
-        notify.send_telegram(settings, text)
+        notify.send_telegram(settings, text, buttons=buttons)
 
 
 def cmd_auth(args, s) -> None:
@@ -210,6 +210,44 @@ def cmd_withdraw(args, s) -> None:
     print(json.dumps(result, indent=2, ensure_ascii=False)[:2000] if result else "(sin cuerpo de respuesta)")
 
 
+def cmd_execute_action(args, s) -> None:
+    """Entrada interna para el flujo de botones de Telegram (webhook → Cloudflare Worker →
+    repository_dispatch → este comando). A diferencia de `bid`/`clause`/`sell`/`withdraw`, NO
+    tiene vista previa: solo se llega aquí después de que el Worker ya pidió confirmación con
+    un segundo botón ("¿Seguro?"), así que aquí siempre se ejecuta de verdad. No lo lances a
+    mano salvo que sepas exactamente qué código de acción estás pasando (ver CLAUDE.md, sección
+    de botones, para el formato "c:<player_id>")."""
+    if not notify.telegram_enabled(s):
+        sys.exit("execute-action necesita Telegram configurado (informa del resultado por ahí)")
+    verb, _, rest = args.action.partition(":")
+    api = FantasyAPI(s)
+    try:
+        if verb != "c":
+            raise RuntimeError(f"Acción no reconocida: {args.action!r}")
+        player_id = rest
+        world = service.build_world(api, s, with_trends=False)
+        slot = next((sl for sl in world.rival_slots if sl.player.id == player_id), None)
+        if not slot:
+            raise RuntimeError("Ese jugador ya no está disponible para clausular (puede que ya se lo hayan llevado).")
+        api.clear_cache()
+        fresh = models.parse_squad(api.team(world.league_id, slot.owner_team_id), slot.owner_team_id, slot.owner_name)
+        fresh_slot = next((sl for sl in fresh if sl.player.id == player_id), None)
+        if not fresh_slot:
+            raise RuntimeError("Ese jugador ya no está en esa plantilla (puede que ya se lo hayan clausulado).")
+        api.pay_clause(world.league_id, fresh_slot.player_team_id, fresh_slot.clause)
+        notify.send_telegram(
+            s, f"✅ {service.b('Cláusula pagada')}\n{service.b(fresh_slot.player.name)} por {service.m(fresh_slot.clause)}"
+        )
+    except Exception as exc:
+        notify.send_telegram(s, f"❌ {service.b('No se pudo ejecutar')}\n{service.esc(str(exc))}")
+        raise
+
+
+def cmd_set_webhook(args, s) -> None:
+    """Una sola vez tras desplegar el Worker: le dice a Telegram a dónde mandar los botones."""
+    print(json.dumps(notify.set_webhook(s, args.url, args.secret), ensure_ascii=False))
+
+
 def cmd_section(args, s) -> None:
     api = FantasyAPI(s)
     world = _world(api, s, trends=args.cmd in ("market", "trends", "report", "losses", "sell-candidates", "market-news"))
@@ -232,7 +270,7 @@ def cmd_section(args, s) -> None:
 
     if args.cmd == "report":
         sections = service.report_sections(world, s, news, store, service.estimate_rival_cash(api, world))
-        print("\n\n".join(sections))
+        print("\n\n".join(text for text, _ in sections))
         if args.telegram:
             notify.send_report(s, sections)
         return
@@ -242,9 +280,9 @@ def cmd_section(args, s) -> None:
         else:
             messages, _ = service.speculative_clauses_report(world, s)
             if not messages:
-                messages = ["Nada especulativo ahora mismo."]
-        for msg in messages:
-            _out(s, msg, args.telegram)
+                messages = [("Nada especulativo ahora mismo.", None)]
+        for msg, buttons in messages:
+            _out(s, msg, args.telegram, buttons=buttons)
         return
     text = {
         "market": lambda: service.market_report(world),
@@ -286,12 +324,13 @@ def _watch_once(store: Store, s) -> str:
     _, alerts = service.clauses_report(world, s, clause_news)
     fresh = [a for a in alerts if store.alert_is_new(a.key)]
     for a in fresh:
-        notify.send_telegram(s, f"🚨 {a.message}")
+        buttons = service._clause_keyboard(a.slot.player.id) if a.kind == "open_affordable" else None
+        notify.send_telegram(s, f"🚨 {a.message}", buttons=buttons)
 
     _, hot_alerts = service.speculative_clauses_report(world, s)
     fresh_hot = [a for a in hot_alerts if store.alert_is_new(a.key)]
     for a in fresh_hot:
-        notify.send_telegram(s, f"📈 {a.message}")
+        notify.send_telegram(s, f"📈 {a.message}", buttons=service._clause_keyboard(a.slot.player.id))
 
     tx = service.my_transactions(api, world, store)
     if tx:
@@ -430,6 +469,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("player_id", help="id del jugador (el tuyo, puesto a la venta)")
     p.add_argument("--confirm", action="store_true", help="ejecuta de verdad; sin esto solo es vista previa")
     p.set_defaults(func=cmd_withdraw)
+
+    p = sub.add_parser("set-webhook", help="Configura el webhook de Telegram hacia el Worker (una vez)")
+    p.add_argument("url", help="URL pública del Worker desplegado")
+    p.add_argument("secret", help="el mismo valor que TELEGRAM_WEBHOOK_SECRET del Worker")
+    p.set_defaults(func=cmd_set_webhook)
+
+    p = sub.add_parser("execute-action", help="Interno: ejecuta una acción del botón de Telegram (sin vista previa)")
+    p.add_argument("action", help='código de acción, p.ej. "c:2206"')
+    p.set_defaults(func=cmd_execute_action)
 
     sub.add_parser("watch", help="Vigilancia continua con alertas por Telegram").set_defaults(func=cmd_watch)
     sub.add_parser("tick", help="Una sola pasada de vigilancia (para cron / GitHub Actions)").set_defaults(func=cmd_tick)
