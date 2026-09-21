@@ -176,12 +176,25 @@ mismo).
   coincide EXACTAMENTE con lo que bajó mi saldo (153.144.766 → 140.594.133).
 - El blindaje no cuesta dinero (importe 0 en el feed y es gratuito en el juego oficial): no falta
   nada por ahí. `teamMoney` de los rivales es `null` tanto en `standing` como en `teams/{id}`.
-- PERO calibrando contra tu saldo real el presupuesto inicial sale 57.140.754 (nada redondo) y,
-  con ese inicio, el saldo de los 6 mánagers —tú incluido— baja de cero en algún momento (hasta
-  -70M), lo que no puede ser. Con saldo siempre ≥ 0 el inicio mínimo para ti sería 96.5M, o sea
-  faltan al menos ~40M de movimientos en el historial que no sabemos cuáles son. Por eso el
-  saldo estimado es ORIENTATIVO: `analysis.CASH_UNCERTAINTY` = 40M de margen, y
+- Reglas del juego que importan aquí (búsqueda web, 2026-09-21): el saldo PUEDE ser negativo
+  temporalmente (deuda máx. 20% del valor de la plantilla) pero debe ser ≥ 0 cuando empieza la
+  jornada, y NO se puede pagar una cláusula endeudándose (hace falta el dinero). Además, según
+  el usuario, cada mánager arranca con 11 jugadores + el dinero que falte hasta un valor
+  común, así que el presupuesto inicial NO tiene por qué ser igual para todos (el modelo asume
+  que sí).
+- Calibrando contra tu saldo real el presupuesto inicial sale 57.140.754 (nada redondo). Con
+  la regla "tras pagar una cláusula el saldo es ≥ 0", el inicio mínimo de cada mánager sale
+  entre 80M y 99M (C4STILL0FC 84.0, dmoral08 95.7, Paneq 98.9, icb30 87.0, Kajota 96.5,
+  paauu10 80.3): un grupo compacto compatible con que todos arrancaran con ~100M. Para ti eso
+  daría 183.45M frente a los 140.59M reales: quedan ~42.9M de salida de dinero SIN explicar
+  (no es un % limpio: 8.3% de tus ventas o de tus compras a LaLiga, 15% de las cláusulas
+  cobradas, 19.5% de las pagadas). No están localizados. El (-70M..) "saldo negativo imposible"
+  que se anotó primero era un error: la deuda está permitida; lo sólido es la restricción de
+  cláusulas.
+- Por eso el saldo estimado es ORIENTATIVO: `analysis.CASH_UNCERTAINTY` = 40M de margen, y
   `analysis.can_bid` clasifica seguro / dudoso / no (con pujas baratas casi todo es "dudoso").
+  Para un rival el saldo real estaría entre lo estimado (inicio 57M) y ~43M más (inicio ~100M
+  sin esa salida sin explicar), según si la comparte.
 - Cómo validarlo mejor: comparar saldo real antes/después de un evento de compra/venta a
   LaLiga (tipos 31/33) — hasta ahora solo está comprobado el de cláusula (tipo 1). Los
   cierres del mercado (21:02) y las ventas dan esa comparación exacta.
