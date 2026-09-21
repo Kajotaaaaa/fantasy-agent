@@ -208,6 +208,12 @@ botón "c:<player_id>" → Worker cambia a [Sí, pagar "C:<id>"] [Cancelar "N:c:
   `notify.send_telegram(..., buttons=)` los adjunta (en mensajes troceados, solo al último).
 - Para añadir otra acción (pujar, vender, retirar): nueva entrada en `ACTIONS` del Worker, rama
   nueva en `cmd_execute_action`, y botón en el mensaje correspondiente. Hoy solo existe `c`.
+- Estado (2026-09-21): desplegado y verificado de punta a punta — doble confirmación, cancelar,
+  dispatch a GitHub y respuesta por Telegram — usando un botón de prueba con un id inexistente
+  (`c:99999999`, termina en "❌ ya no está disponible", sin pagar nada). El pago real por botón
+  aún no se ha ejercitado con dinero: la primera cláusula real pagada así es la prueba final.
+  Token de GitHub del Worker caduca el 21/09/2027 (si falla el botón con "GitHub respondió
+  401", renovarlo y repetir `npx wrangler secret put GITHUB_TOKEN`).
 - Puesta en marcha (lo hace el usuario, requiere sus cuentas): `cd worker && npx wrangler deploy`,
   `npx wrangler secret put` de TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET,
   GITHUB_TOKEN (PAT con permiso sobre el repo), GITHUB_REPO ("owner/repo"); luego
