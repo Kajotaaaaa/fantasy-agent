@@ -246,10 +246,12 @@ def _act_bid(api, s, target: str) -> str:
         raise RuntimeError(f"{service.m(amount)} es una cantidad sospechosa (más de 3x el mínimo); no pujo.")
     if cash is not None and amount > cash:
         raise RuntimeError(f"No te llega el saldo ({service.m(cash)}) para pujar {service.m(amount)}.")
-    api.bid(league_id, item.listing_id, amount)
+    response = api.bid(league_id, item.listing_id, amount)
+    bid_id = str(response.get("id", "")) if isinstance(response, dict) else ""
     return (
         f"✅ {service.b('Puja enviada')}\n{service.b(item.player.name)} por {service.m(amount)}\n"
         f"{service.i('Queda pendiente: se resuelve al cierre del mercado, el saldo no baja ya.')}"
+        + (f"\n{service.i(f'id de la puja: {bid_id} (anúnciala si quieres poder cambiarla luego)')}" if bid_id else "")
     )
 
 

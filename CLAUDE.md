@@ -91,9 +91,15 @@ contra la liga real de producción:
   usa `playerTeamId` (el hueco de plantilla, campo `SquadSlot.player_team_id`), NO el id
   genérico del jugador — con el id equivocado da un 409 "Buyout wanted to pay is not updated"
   que parece un problema de datos desactualizados pero es la identidad equivocada.
-  **Pujar dos veces al mismo anuncio no duplica**: la nueva puja SOBRESCRIBE a la anterior,
-  aunque sea más baja (dato del usuario, 2026-09-21). Ojo: una puja del flipeo o de un botón
-  pisa la que hubieras hecho a mano por ese jugador.
+  **Pujar dos veces al mismo anuncio NO se puede**: el segundo POST da 400 `030.01.09 "Team
+  has pending bid in this player"` (Pablo García, 2026-09-21; el usuario creía que la nueva
+  puja sobrescribía a la anterior — falso por este endpoint). Para cambiar una puja existe
+  `PUT /league/{id}/market/{market_id}/bid/{bid_id}` (encontrado con OPTIONS/405, sin probar el
+  cuerpo — probablemente `{"money": cantidad}`), pero hace falta el `bid_id` que devuelve el
+  POST original (`"id"` en la respuesta) y NO hay ninguna ruta para listar las pujas propias
+  (probadas ~25 rutas, todas 404): ahora el flipeo lo guarda en `flip_pending` (`bid_id`) y el
+  aviso de puja por botón lo muestra. La puja de Pablo García (8.47M) se hizo sin guardarlo y
+  no se puede modificar.
   **Cantidad**: no vale pujar siempre el precio pedido. Si el anuncio pide menos que el valor
   de mercado actual del jugador, el servidor responde 400 `030.01.01 "\"15207008\" is not a
   valid money quantity for this player"` (Yuri, 2026-09-21: pedía 15.21M, valía 15.52M; el

@@ -183,7 +183,7 @@ def _buy(api: FantasyAPI, world: service.World, store, s: Settings, now: datetim
             out.append(f"sombra {p.name}")
             continue
         try:
-            api.bid(world.league_id, item.listing_id, amount)
+            response = api.bid(world.league_id, item.listing_id, amount)
         except Exception as exc:
             notify.send_telegram(s, f"🤖 {b('No pude pujar')} por {b(p.name)}\n{esc(str(exc))}")
             out.append(f"fallo puja {p.name}")
@@ -191,6 +191,9 @@ def _buy(api: FantasyAPI, world: service.World, store, s: Settings, now: datetim
         record = {
             "player_id": p.id, "name": p.name, "amount": amount, "placed_at": now.isoformat(),
             "expires": (item.expires or now).isoformat(),
+            # Sin el id de la puja no se puede modificar después (PUT .../bid/{id}); la API no
+            # tiene ninguna ruta para listar las pujas propias.
+            "bid_id": str(response.get("id", "")) if isinstance(response, dict) else "",
         }
         store.set(f"flip_pending:{item.listing_id}", json.dumps(record))
         committed += amount
