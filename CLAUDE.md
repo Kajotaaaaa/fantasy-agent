@@ -29,7 +29,11 @@ s de Telegram -> Worker -> runner) llegan tarde, pero la hora de desbloqueo
   varias) -> `python -m fantasy_agent clause-snipe "a:<id>"`.
 - El trabajo espera con la hora del servidor (cabecera `Date`), a T-25 s relee la plantilla del
   dueño (id de hueco y cláusula al día) y el saldo, cuenta atrás editando un mensaje de Telegram
-  cada 10 s desde T-60 s, y a T+0 dispara `pay_clause` cada 0.15 s hasta 20 s (sin el ritmo de
+  cada 10 s desde T-60 s, y desde T-0.5 s (`FIRE_LEAD`: la hora del servidor solo se lee con
+  precisión de 1 s; los intentos que caen antes de desbloquearse fallan sin consecuencias)
+  dispara `pay_clause` cada 0.10 s (`RETRY_EVERY`) hasta 20 s, SIN llamadas de red en el camino
+  crítico (la última comprobación de importe y saldo es la de T-25 s; un 409 tras el
+  desbloqueo relee la plantilla como mucho cada 2 s) (sin el ritmo de
   peticiones "humano"). Si el pago cuelga o da error raro, comprueba si el jugador ya es tuyo
   antes de reintentar (no paga dos veces). Un 409 "importe no actualizado" relee la cláusula.
 - **Autorización explícita del usuario (2026-09-21): se compra POR EL IMPORTE EXACTO que viste,

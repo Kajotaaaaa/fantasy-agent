@@ -5,7 +5,7 @@ primero que paga se lleva al jugador. El vigilante de 30 min y el botón normal 
 Worker -> runner de GitHub, 20-60 s) llegan tarde, así que aquí se ARMA la compra con
 antelación: el usuario pulsa "🎯 Comprar al desbloquearse ... por X" y confirma (doble
 confirmación de siempre); ese botón lanza este trabajo, que espera con la hora del servidor de
-LaLiga y dispara el pago al desbloquearse, reintentando cada ~0.15 s.
+LaLiga y dispara el pago al desbloquearse (empieza medio segundo antes), reintentando cada 0.1 s.
 
 REGLA DEL USUARIO (2026-09-21): lo que autoriza es comprar POR ESE IMPORTE EXACTO, y el armado
 SE QUEDA PUESTO (no se elimina). Si el dueño cambia la cláusula (sube o baja) entre que armas y
@@ -39,7 +39,11 @@ COUNTDOWN_FROM = 60  # segundos antes del desbloqueo en que empieza el contador
 COUNTDOWN_STEP = 10
 PREFETCH_AT = 25  # segundos antes: última comprobación (plantilla del dueño, importe y saldo al día)
 FIRE_WINDOW = timedelta(seconds=20)  # cuánto se insiste tras el desbloqueo antes de darlo por perdido
-RETRY_EVERY = 0.15
+RETRY_EVERY = 0.10  # pausa entre intentos de pago (cada uno tarda además ~0.3-0.6 s en ir y volver)
+FIRE_LEAD = 0.5  # segundos ANTES del desbloqueo en que ya se empieza a intentar: la hora del servidor
+# solo se lee con precisión de 1 s y un intento tarda en llegar; los que caen antes fallan sin
+# consecuencias (aún bloqueada) y el primero después del desbloqueo entra en cuanto se puede.
+RECHECK_EVERY = 2.0  # mínimo entre relecturas de la plantilla durante el disparo (cada una cuesta ~0.5 s)
 
 
 def fire_time(
@@ -251,6 +255,7 @@ def run(
     )
 
     warned: set[int] = set()  # importes nuevos de los que ya te he avisado (una vez por importe)
+    known_cash: list[int | None] = [cash]  # último saldo leído (el camino crítico no hace llamadas de red)
 
     def check() -> models.SquadSlot | None:
         """Relee la plantilla del dueño. Si la cláusula ya no vale lo autorizado, AVISA (una vez
@@ -261,11 +266,12 @@ def run(
         if fresh is None:
             return None
         ptid = fresh.player_team_id
+        known_cash[0] = service.resolve_league(fast, s)[2]
         if fresh.clause != amount and fresh.clause not in warned:
             warned.add(fresh.clause)
             text, buttons = changed_message(
                 name, owner, player_id, amount, fresh.clause,
-                fire_time(fresh.clause_locked_until, world.clause_freeze, now()), service.resolve_league(fast, s)[2],
+                fire_time(fresh.clause_locked_until, world.clause_freeze, now()), known_cash[0],
             )
             notify.send_telegram(s, text, buttons=buttons)
         return fresh
@@ -298,7 +304,7 @@ def run(
     prefetched = False
     latest = slot
     if fire_at is not None:
-        while (left := (fire_at - now()).total_seconds()) > 0:
+        while (left := (fire_at - now()).total_seconds()) > FIRE_LEAD:
             if (not prefetched and left <= PREFETCH_AT) or (left > PREFETCH_AT + 5 and time.time() >= next_check):
                 prefetched = prefetched or left <= PREFETCH_AT
                 next_check = time.time() + CHECK_EVERY
@@ -317,7 +323,7 @@ def run(
                     else:
                         notify.edit_message(s, counter_id, text)
                     last_edit = time.time()
-                time.sleep(min(0.5, max(0.02, left - 0.05)))
+                time.sleep(min(0.5, max(0.01, left - FIRE_LEAD)))
             else:
                 time.sleep(min(1.0, max(0.05, left - COUNTDOWN_FROM), max(0.05, next_check - time.time())))
     else:
@@ -326,23 +332,25 @@ def run(
             gone()
             return
         latest = fresh
-    # Última puerta antes de pagar: importe autorizado y saldo, con datos de hace segundos.
-    if refuse(latest, service.resolve_league(fast, s)[2]):
+    # Última puerta antes de pagar, SIN llamadas de red (cada una cuesta ~0.5 s justo cuando
+    # cuenta): importe autorizado y saldo según la comprobación de hace unos segundos (T-25 s).
+    if refuse(latest, known_cash[0]):
         if counter_id is not None:
             notify.edit_message(s, counter_id, "🚫 No he comprado: el importe ya no es el autorizado.")
         return
-    if counter_id is not None:
-        notify.edit_message(s, counter_id, f"⚡ {b(name)}: ¡desbloqueada! Pagando {service.m(amount)}…")
 
-    # Disparo: se insiste cada RETRY_EVERY hasta que entra o pasa la ventana, SIEMPRE por el mismo
-    # importe. Un error antes de tiempo (aún bloqueada) se reintenta; un 409 ("importe no
-    # actualizado") significa que el dueño cambió la cláusula: se cancela y se pregunta; si un
-    # intento cuelga o el jugador ya aparece en tu plantilla, se da por pagado sin volver a pagar.
+    # Disparo: desde FIRE_LEAD s antes del desbloqueo se insiste cada RETRY_EVERY hasta que entra
+    # o pasa la ventana, SIEMPRE por el mismo importe. Un error antes de tiempo (aún bloqueada) se
+    # reintenta sin más; un 409 ("importe no actualizado") DESPUÉS del desbloqueo significa que
+    # el dueño cambió la cláusula: se comprueba (como mucho cada RECHECK_EVERY s) y, si es así,
+    # se cancela y se pregunta; si un intento cuelga o el jugador ya aparece en tu plantilla, se
+    # da por pagado sin volver a pagar.
     started = now()
     deadline = started + FIRE_WINDOW
     last_error = ""
     attempts = 0
     paid = False
+    last_recheck = 0.0
     while now() < deadline and not paid:
         attempts += 1
         try:
@@ -351,7 +359,9 @@ def run(
             paid = True
         except HttpError as exc:
             last_error = str(exc)
-            if exc.status == 409:  # "importe no actualizado": el dueño cambió la cláusula
+            unlocked = fire_at is None or now() >= fire_at
+            if exc.status == 409 and unlocked and time.time() - last_recheck >= RECHECK_EVERY:
+                last_recheck = time.time()
                 fresh = check()
                 if fresh is None:
                     gone()
@@ -367,7 +377,7 @@ def run(
         paid = True
 
     if paid:
-        took = (now() - (fire_at or started)).total_seconds()
+        took = (now() - (fire_at or started)).total_seconds()  # desde el desbloqueo (negativo = entró antes, no debería)
         msg = (
             f"✅ {tag}{b('¡Cláusula pagada!')}\n{b(name)} de {esc(owner)} por {b(service.m(amount))}\n"
             f"{i(f'Pagada {took:+.1f} s respecto al desbloqueo ({attempts} intentos).')}"
