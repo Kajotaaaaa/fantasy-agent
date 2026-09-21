@@ -39,6 +39,8 @@ class Settings:
     clause_window_hours: int
     watch_interval_min: int
     report_hour: int
+    market_study_hour: int
+    market_study_minute: int
     request_delay_s: float
 
     @property
@@ -66,5 +68,7 @@ def load_settings() -> Settings:
         clause_window_hours=int(os.environ.get("CLAUSE_WINDOW_HOURS", "24")),
         watch_interval_min=int(os.environ.get("WATCH_INTERVAL_MIN", "30")),
         report_hour=int(os.environ.get("REPORT_HOUR", "9")),
+        market_study_hour=int(os.environ.get("MARKET_STUDY_HOUR", "21")),
+        market_study_minute=int(os.environ.get("MARKET_STUDY_MINUTE", "5")),
         request_delay_s=float(os.environ.get("REQUEST_DELAY_S", "0.4")),
     )

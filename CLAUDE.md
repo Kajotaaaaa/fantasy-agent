@@ -44,6 +44,14 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   pagaste de verdad, no una referencia arbitraria). Si ya está recuperando (`trend.d3 > 1%`)
   no avisa todavía — solo pérdidas sostenidas. Solo cubre lo comprado desde que arrancó el
   seguimiento de movimientos (no hay dato de compra para lo que ya tenías antes).
+- **Estudio de mercado diario** (`service.market_arrivals_report`): el mercado de LaLiga se
+  refresca cada día a las 21:00; a las `MARKET_STUDY_HOUR:MARKET_STUDY_MINUTE` (21:05 por
+  defecto, hora de España) se manda un veredicto (1-4 estrellas, como `clause_verdict`) de
+  cada jugador nuevo desde el último estudio (`kv.market_seen:<id>` como snapshot). Las horas
+  de juego se calculan con `cli._madrid_now()` (regla DST de la UE a mano, sin `zoneinfo`/
+  `tzdata`: en Windows `zoneinfo` necesita el paquete `tzdata`, que no es estándar, y el
+  runner de GitHub Actions va en UTC) — nunca compares horas de juego con `datetime.now()` a
+  secas.
 
 ## Mapa
 - `auth.py`     login Azure B2C (PKCE) y refresh de tokens

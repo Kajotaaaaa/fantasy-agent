@@ -262,6 +262,49 @@ def trends_report(world: World) -> str:
     return "📊 TUS JUGADORES: vender o mantener\n\n" + "\n\n".join(lines)
 
 
+def market_arrivals_report(world: World, store) -> str:
+    """Lo que ha entrado nuevo al mercado de LaLiga desde el último estudio (pensado para
+    correr una vez al día, justo tras el refresco diario del mercado a las 21:00) con un
+    veredicto propio para cada fichaje — no una lista recortada por nota de corte, sino
+    "esto es lo fresco y esto es lo que opino de cada uno". Guarda qué ids ha visto para poder
+    distinguir "nuevo" de "ya lo vi ayer y sigue sin venderse"."""
+    current = _biddable(world)
+    seen = set(store.prefixed("market_seen:").keys())
+    now_ids = {i.player.id for i in current}
+    new_items = [i for i in current if i.player.id not in seen]
+    for pid in seen - now_ids:
+        store.set(f"market_seen:{pid}", "")
+    for i in current:
+        store.set(f"market_seen:{i.player.id}", "1")
+    if not new_items:
+        return ""
+
+    rows = []
+    for i in new_items:
+        trend = world.trends.get(i.player.id, (i.player, analysis.Trend(0, 0, 0)))[1]
+        is_top = i.player.id in world.league_top_ids
+        stars, label, reasons = analysis.market_verdict(i, trend, world.my_cash, is_top)
+        rows.append((stars, i, trend, label, reasons))
+    rows.sort(key=lambda r: -r[0])
+
+    cards = []
+    for stars, i, trend, label, reasons in rows:
+        p = i.player
+        proj = analysis.project_value(i.price, trend)
+        gain_pct = (proj - i.price) / i.price * 100 if i.price else 0
+        stars_str = "★" * stars + "☆" * (4 - stars)
+        motivos = "\n".join(f"- {r}" for r in reasons)
+        cards.append(
+            f"{p.name}\n"
+            f"Posición: {p.position} · Equipo: {p.team}\n"
+            f"Precio: {m(i.price)}\n"
+            f"{stars_str} {label}\n"
+            f"Por qué:\n{motivos}\n"
+            f"Valor: {trend.label} ({trend.d7:+}% en 7 días) · a 14 días ~{m(proj)} ({gain_pct:+.0f}%)"
+        )
+    return "🗞️ NUEVO EN EL MERCADO · estudio de viabilidad\n\n" + "\n\n".join(cards)
+
+
 def losing_positions_report(world: World, store) -> str:
     """Jugadores tuyos por debajo de lo que pagaste (precio de compra real, no tendencia de
     mercado sin más) — usa el histórico de `my_transactions`, así que solo cubre lo comprado

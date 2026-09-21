@@ -76,6 +76,73 @@ def score_market_item(item: MarketItem, trend: Trend, my_cash: int | None) -> Op
     return Opportunity(item, trend, round(score, 1), reasons)
 
 
+def market_verdict(
+    item: MarketItem,
+    trend: Trend,
+    my_cash: int | None,
+    is_top: bool,
+) -> tuple[int, str, list[str]]:
+    """Igual que `clause_verdict` pero para una entrada nueva del mercado de LaLiga: 1-4
+    estrellas con los motivos explicados, para el "estudio de viabilidad" de cada fichaje
+    recién salido, no solo una lista filtrada por nota de corte."""
+    p = item.player
+    points = 0.0
+    reasons: list[str] = []
+
+    millions = max(item.price, 1) / 1_000_000
+    ppm = p.avg_points / millions
+    if ppm >= 1.2:
+        points += 2.0
+        reasons.append(f"Muy rentable en puntos por millón ({p.avg_points:.1f} pts/partido a {_fmt_m(item.price)})")
+    elif ppm >= 0.7:
+        points += 1.0
+        reasons.append(f"Rentable en puntos por millón ({p.avg_points:.1f} pts/partido)")
+    else:
+        reasons.append(f"Rendimiento ajustado al precio ({p.avg_points:.1f} pts/partido)")
+
+    if p.market_value and item.price < p.market_value:
+        gap_pct = (p.market_value - item.price) / p.market_value * 100
+        if gap_pct >= 15:
+            points += 1.5
+            reasons.append(f"Precio muy por debajo de mercado (-{gap_pct:.0f}%)")
+        elif gap_pct >= 5:
+            points += 0.7
+            reasons.append(f"Precio por debajo de mercado (-{gap_pct:.0f}%)")
+    elif p.market_value and item.price > p.market_value * 1.05:
+        over_pct = (item.price - p.market_value) / p.market_value * 100
+        points -= 1.0
+        reasons.append(f"Precio por encima de mercado (+{over_pct:.0f}%)")
+
+    if trend.d7 >= 5:
+        points += 1.0
+        reasons.append(f"En racha: su valor sube ({trend.d7:+.1f}% en 7 días)")
+    elif trend.d7 <= -5:
+        points -= 0.5
+        reasons.append(f"Su valor está cayendo ({trend.d7:+.1f}% en 7 días)")
+
+    if not p.available:
+        points -= 3.0
+        reasons.append(f"⚠️ estado: {p.status}")
+
+    if my_cash is not None and item.price > my_cash:
+        points -= 2.0
+        reasons.append("no te llega el saldo ahora mismo")
+
+    if is_top:
+        points += 1.5
+        reasons.append("🌟 de los mejores de LaLiga en su posición")
+
+    if points >= 4.5:
+        stars, label = 4, "🔥 Fichaje claro"
+    elif points >= 2.5:
+        stars, label = 3, "✅ Buena opción"
+    elif points >= 1.0:
+        stars, label = 2, "🤔 Con dudas"
+    else:
+        stars, label = 1, "🚫 Paso"
+    return stars, label, reasons
+
+
 def score_investment(item: MarketItem, trend: Trend) -> float | None:
     """Puntuación centrada solo en potencial de revalorización (comprar barato, vender caro)."""
     p = item.player

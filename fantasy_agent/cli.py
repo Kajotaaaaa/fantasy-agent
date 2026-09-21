@@ -6,13 +6,33 @@ import json
 import random
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from . import auth, notify, service
 from .api import FantasyAPI
 from .attendance import estimate_titularidad
 from .config import load_settings
 from .storage import Store
+
+
+def _last_sunday(year: int, month: int) -> datetime:
+    d = datetime(year, month, 31, 1, 0, tzinfo=timezone.utc)  # el cambio de hora UE es a la 01:00 UTC
+    while d.weekday() != 6:  # domingo
+        d -= timedelta(days=1)
+    return d
+
+
+def _madrid_now() -> datetime:
+    """Hora de España (CET/CEST) calculada a mano: en Windows `zoneinfo` necesita el paquete
+    `tzdata` (no viene con el sistema) y el proyecto es solo librería estándar, así que se
+    aplica la regla de la UE (DST del último domingo de marzo al último domingo de octubre)
+    sin depender de nada externo. Necesario para que las horas de juego (mercado, cláusulas)
+    signifiquen lo mismo tanto en local como en el runner de GitHub Actions (que va en UTC)."""
+    utc_now = datetime.now(timezone.utc)
+    dst_start = _last_sunday(utc_now.year, 3)
+    dst_end = _last_sunday(utc_now.year, 10)
+    offset = 2 if dst_start <= utc_now < dst_end else 1
+    return utc_now.astimezone(timezone(timedelta(hours=offset)))
 
 
 def _out(settings, text: str, telegram: bool) -> None:
@@ -74,7 +94,7 @@ def _world(api, s, trends=True):
 
 def cmd_section(args, s) -> None:
     api = FantasyAPI(s)
-    world = _world(api, s, trends=args.cmd in ("market", "trends", "report", "losses"))
+    world = _world(api, s, trends=args.cmd in ("market", "trends", "report", "losses", "market-news"))
     if args.cmd in ("clauses", "report"):
         service.ensure_clause_trends(api, world, s)
 
@@ -85,7 +105,7 @@ def cmd_section(args, s) -> None:
         news_targets += service.clause_titularidad_candidates(world, s)
     news = estimate_titularidad(api, news_targets) if news_targets else None
 
-    store = Store(s.db_file) if args.cmd in ("report", "losses") else None
+    store = Store(s.db_file) if args.cmd in ("report", "losses", "market-news") else None
 
     if args.cmd == "report":
         sections = service.report_sections(world, s, news, store)
@@ -100,18 +120,25 @@ def cmd_section(args, s) -> None:
         "clauses": lambda: service.clauses_report(world, s, news)[0],
         "lineup": lambda: service.lineup_report(world, news),
         "losses": lambda: service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.",
+        "market-news": lambda: service.market_arrivals_report(world, store) or "Nada nuevo desde el último estudio.",
     }[args.cmd]()
     _out(s, text, args.telegram)
 
 
 def _watch_once(store: Store, s) -> str:
     """Una pasada: alertas de cláusula siempre (con veredicto propio: precio, racha y
-    noticias reales de los candidatos), informe completo si toca hoy."""
-    now = datetime.now()
+    noticias reales de los candidatos), informe completo si toca hoy, estudio de mercado
+    justo tras el refresco diario. Hora de España siempre (aunque esto corra en un runner de
+    GitHub Actions en UTC), para que REPORT_HOUR/MARKET_STUDY_HOUR signifiquen lo que dicen."""
+    now = _madrid_now()
     today = now.strftime("%Y-%m-%d")
     daily_due = now.hour >= s.report_hour and store.get("last_daily") != today
+    market_due = (
+        (now.hour, now.minute) >= (s.market_study_hour, s.market_study_minute)
+        and store.get("last_market_study") != today
+    )
     api = FantasyAPI(s)
-    world = _world(api, s, trends=daily_due)
+    world = _world(api, s, trends=daily_due or market_due)
     service.ensure_clause_trends(api, world, s)
 
     clause_news = {}
@@ -129,6 +156,12 @@ def _watch_once(store: Store, s) -> str:
     if tx:
         notify.send_telegram(s, "📒 MOVIMIENTOS EN TU EQUIPO\n\n" + "\n\n".join(tx))
 
+    if market_due:
+        arrivals = service.market_arrivals_report(world, store)
+        if arrivals:
+            notify.send_telegram(s, arrivals)
+        store.set("last_market_study", today)
+
     if daily_due:
         news = dict(clause_news)
         try:
@@ -140,6 +173,7 @@ def _watch_once(store: Store, s) -> str:
     return (
         f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas · {len(tx)} movimientos"
         f"{' · informe diario enviado' if daily_due else ''}"
+        f"{' · estudio de mercado enviado' if market_due else ''}"
     )
 
 
@@ -202,6 +236,7 @@ def main(argv: list[str] | None = None) -> None:
         ("clauses", "Alarmas de cláusulas"),
         ("lineup", "Once recomendado"),
         ("losses", "Jugadores tuyos por debajo de lo que pagaste"),
+        ("market-news", "Nuevo en el mercado desde el último estudio, con veredicto"),
         ("report", "Informe completo"),
     ]:
         p = sub.add_parser(name, help=help_)
