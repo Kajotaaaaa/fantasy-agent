@@ -352,7 +352,8 @@ def cmd_set_webhook(args, s) -> None:
 def cmd_section(args, s) -> None:
     api = FantasyAPI(s)
     world = _world(
-        api, s, trends=args.cmd in ("market", "trends", "report", "losses", "sell-candidates", "market-news", "listen"),
+        api, s,
+        trends=args.cmd in ("market", "trends", "report", "losses", "sell-candidates", "market-news", "listen", "bids"),
     )
     if args.cmd in ("clauses", "clauses-hot", "report"):
         service.ensure_clause_trends(api, world, s)
@@ -393,6 +394,10 @@ def cmd_section(args, s) -> None:
         text, buttons = service.market_arrivals_report(world, store)
         return text or "Nada nuevo desde el último estudio.", buttons
 
+    def bids() -> tuple[str, dict | None]:
+        text, buttons = service.my_bids_report(world)
+        return text or "No tienes ninguna puja pendiente ahora mismo.", buttons
+
     def listings() -> tuple[str, dict | None]:
         text, buttons = service.my_listings_report(world)
         return text or "No tienes a nadie a la venta ahora mismo.", buttons
@@ -415,6 +420,7 @@ def cmd_section(args, s) -> None:
             lambda r: (r[0] or "Ningún jugador tuyo con la tendencia bajando ahora mismo.", r[1])
         )(service.offers_watch_report(world, store)),
         "listings": listings,
+        "bids": bids,
         "advice": lambda: (service.daily_advice_report(world, rival_cash), None),
     }[args.cmd]()
     _out(s, text, args.telegram, buttons=buttons)
@@ -571,6 +577,7 @@ def main(argv: list[str] | None = None) -> None:
         ("market-news", "Nuevo en el mercado desde el último estudio, con veredicto"),
         ("listen", "A quién poner a escuchar ofertas (tendencia bajando), con botón de vender"),
         ("listings", "Tus jugadores en venta ahora, con botón para retirarlos"),
+        ("bids", "Tus pujas pendientes, con botón para cambiarlas"),
         ("advice", "Consejo táctico del día"),
         ("report", "Informe completo"),
     ]:

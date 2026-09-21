@@ -603,6 +603,23 @@ def offers_watch_report(world: World, store=None) -> tuple[str, dict | None]:
     return head + "\n\n" + "\n".join(cards), _keyboard(rows)
 
 
+def my_bids_report(world: World) -> tuple[str, dict | None]:
+    """Tus pujas pendientes (la API marca la tuya en cada anuncio, ver `MarketItem.my_bid_id`),
+    cada una con botón para cambiarla al mínimo de ahora / con margen si hay margen."""
+    pending = [it for it in world.market if it.my_bid_id]
+    if not pending:
+        return "", None
+    cards, rows = [], []
+    for it in pending:
+        trend = world.trends.get(it.player.id, (it.player, analysis.Trend(0, 0, 0)))[1]
+        minimum = bid_amount(it)
+        note = "" if it.my_bid == minimum else f" · el mínimo ahora es {m(minimum)}"
+        cards.append(f"{b(it.player.name)} · tu puja {b(m(it.my_bid))}{note} · {i(analysis.trend_words(trend))}")
+        rows += _bid_rows(world, it, trend, it.player.id in world.league_top_ids, with_ceiling=False)
+    head = f"{b('📌 Tus pujas pendientes')}\n{i('Se resuelven al cierre del mercado (21:02)')}"
+    return head + "\n\n" + "\n".join(cards), _keyboard(rows)
+
+
 def my_listings_report(world: World) -> tuple[str, dict | None]:
     """Tus jugadores puestos a la venta ahora, cada uno con su botón de retirarlo."""
     listings = _my_listings(world)
@@ -1066,6 +1083,10 @@ def report_sections(
     listings_text, listings_buttons = my_listings_report(world)
     if listings_text:
         sections.append((listings_text, listings_buttons))
+
+    bids_text, bids_buttons = my_bids_report(world)
+    if bids_text:
+        sections.append((bids_text, bids_buttons))
 
     clause_messages, alerts = clauses_report(world, s, news)
     if alerts:

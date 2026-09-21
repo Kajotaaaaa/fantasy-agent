@@ -294,6 +294,7 @@ Elegido por el usuario: webhook (no sondeo). Cuatro acciones, código `<verbo>:<
 | `c:<player_id>` | 💳 Pagar cláusula | alerta de cláusula pagable ya (`open_affordable`) y todas las especulativas | relee la plantilla del rival SIN caché y paga con `playerTeamId` |
 | `b:<listing_id>:<cantidad>` | 💰 mínimo / 📈 margen / 🎯 techo (hasta 3 filas por jugador) | "Mercado para tu once" + "Inversión" (un mensaje) y "Nuevo en el mercado" (solo ≥3 ★) | puja EXACTAMENTE esa cantidad; solo anuncios de LaLiga; nunca < mínimo válido, > saldo ni > 3x el mínimo |
 | `s:<player_id>` | 📤 Vender <nombre> <valor> | "Candidatos a vender" (tendencia a la baja) salvo los que ya están en venta | pone a la venta a valor de mercado |
+| `u:<anuncio>:<puja>:<cantidad>` | ✏️ Cambiar puja (solo si ya tienes una pendiente ahí) | "📌 Tus pujas pendientes" (`my_bids_report`, comando `bids`, también en el informe diario) y las tarjetas de compra | `api.update_bid` (PUT, cuerpo sin verificar); comprueba que la puja sigue pendiente y los mismos topes que `b` |
 | `w:<player_id>` | ↩️ Retirar <nombre> | "En venta ahora" (`my_listings_report`, comando `listings`) | retira el anuncio |
 
 Los avisos "se libera en Xh" no llevan botón (aún no se puede pagar).
