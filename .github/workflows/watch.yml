@@ -3,7 +3,12 @@ name: fantasy-watch
 on:
   schedule:
     - cron: "*/30 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_flip_buy:
+        description: "Forzar ahora la compra diaria del flipeo (necesita FLIP_MODE=on o shadow)"
+        type: boolean
+        default: false
 
 concurrency:
   group: fantasy-watch
@@ -47,6 +52,7 @@ jobs:
           # Interruptor del flipeo autónomo: variable del repositorio (Settings > Secrets and
           # variables > Actions > Variables). "on" ejecuta, "shadow" solo cuenta, vacío = apagado.
           FLIP_MODE: ${{ vars.FLIP_MODE }}
+          FLIP_FORCE_BUY: ${{ inputs.force_flip_buy && '1' || '' }}
 
       - name: Guardar estado actualizado
         if: always()

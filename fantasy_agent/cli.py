@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 import time
@@ -403,8 +404,9 @@ def _watch_once(store: Store, s) -> str:
         (now.hour, now.minute) >= (s.market_study_hour, s.market_study_minute)
         and store.get("last_market_study") != today
     )
+    force_flip = os.environ.get("FLIP_FORCE_BUY") == "1"
     api = FantasyAPI(s)
-    world = _world(api, s, trends=daily_due or market_due)
+    world = _world(api, s, trends=daily_due or market_due or force_flip)
     service.ensure_clause_trends(api, world, s)
     service.ensure_speculative_trends(api, world, s)
 
@@ -438,7 +440,12 @@ def _watch_once(store: Store, s) -> str:
 
     flip_note = ""
     try:
-        flip_note = flip.run(api, world, store, s, buy_now=daily_due, today=today)
+        if force_flip and s.flip_mode not in ("on", "shadow"):
+            notify.send_telegram(
+                s, f"🤖 {service.b('Flipeo apagado')}\nHas pedido forzar una compra pero FLIP_MODE no está en "
+                   f"on (ni shadow): créala en Settings > Secrets and variables > Actions > Variables.",
+            )
+        flip_note = flip.run(api, world, store, s, buy_now=daily_due or force_flip, today=today, force=force_flip)
     except Exception as exc:
         # Un fallo del flipeo no debe tumbar el resto de la vigilancia (cláusulas, informe...).
         print(f"[flip] error: {exc}")

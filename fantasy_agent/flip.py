@@ -199,10 +199,13 @@ def _buy(api: FantasyAPI, world: service.World, store, s: Settings, now: datetim
     return out
 
 
-def run(api: FantasyAPI, world: service.World, store, s: Settings, buy_now: bool, today: str) -> str:
+def run(
+    api: FantasyAPI, world: service.World, store, s: Settings, buy_now: bool, today: str, force: bool = False,
+) -> str:
     """Un paso del flipeo dentro de la vigilancia. Devuelve un resumen corto para el log ("" si
     no hay nada que hacer o está apagado). `buy_now`: solo una vez al día, cuando ya se han
-    calculado las tendencias del mercado."""
+    calculado las tendencias del mercado. `force`: salta el "una vez al día" (para probarlo a
+    mano desde GitHub con FLIP_FORCE_BUY=1); las demás reglas y el tope siguen valiendo."""
     if s.flip_mode not in ("on", "shadow"):
         return ""
     now = datetime.now(timezone.utc)
@@ -210,7 +213,7 @@ def run(api: FantasyAPI, world: service.World, store, s: Settings, buy_now: bool
     if s.flip_mode == "on":
         notes += _resolve_pending(world, store, s, now)
         notes += _list_held(api, world, store, s, now)
-    if buy_now and store.get("flip_last_buy") != today:
+    if buy_now and (force or store.get("flip_last_buy") != today):
         notes += _buy(api, world, store, s, now)
         store.set("flip_last_buy", today)
     return " · ".join(notes)
