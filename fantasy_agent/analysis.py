@@ -458,14 +458,12 @@ def clause_alerts(
 
         stars, label, reasons = clause_verdict(p, slot.clause, ratio, trends.get(p.id), news.get(p.id))
         stars_str = "★" * stars + "☆" * (4 - stars)
-        motivos = "\n".join(f"• {esc(r)}" for r in reasons)
+        detail = " · ".join(esc(r) for r in reasons)
         alerts.append(ClauseAlert(
             "open_affordable" if slot.clause_open(now) else "unlock_soon", slot,
-            f"{b(p.name)}  <i>{esc(slot.owner_name)}</i>\n"
-            f"{stars_str} {label}\n"
-            f"Cláusula: {b(_fmt_m(slot.clause))} · mercado {_fmt_m(p.market_value)} (x{ratio:.2f})\n"
-            f"{i('Estado: ' + estado)}\n"
-            f"{motivos}",
+            f"{b(p.name)} <i>{esc(slot.owner_name)}</i> · {stars_str} {label} · "
+            f"{b(_fmt_m(slot.clause))} (x{ratio:.2f}) · {estado}\n"
+            f"{i(detail)}",
             tier=tier,
             stars=stars,
         ))
@@ -598,13 +596,12 @@ def speculative_clause_alerts(
         reasons = speculative_clause_verdict(p, slot.clause, trends.get(p.id))
         if reasons is None:
             continue
-        motivos = "\n".join(f"• {esc(r)}" for r in reasons)
+        detail = " · ".join(esc(r) for r in reasons)
         ratio = slot.clause / p.market_value
         message = (
-            f"{b(p.name)}  <i>{esc(slot.owner_name)}</i>\n"
-            f"📈 Racha fuerte y sostenida — especulativo, alto riesgo\n"
-            f"Cláusula: {b(_fmt_m(slot.clause))} · mercado {_fmt_m(p.market_value)} (x{ratio:.2f})\n"
-            f"{motivos}"
+            f"{b(p.name)} <i>{esc(slot.owner_name)}</i> · 📈 especulativo, alto riesgo · "
+            f"{b(_fmt_m(slot.clause))} (x{ratio:.2f})\n"
+            f"{i(detail)}"
         )
         alerts.append(SpeculativeAlert(slot, message))
     return alerts

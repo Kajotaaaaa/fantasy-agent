@@ -198,15 +198,6 @@ def _opportunities(world: World) -> list[analysis.Opportunity]:
     return opps
 
 
-def _my_avg_by_position(world: World) -> dict[int, float]:
-    by_pos: dict[int, list[float]] = {}
-    for sl in world.my_slots:
-        if sl.player.position_id == 5:
-            continue
-        by_pos.setdefault(sl.player.position_id, []).append(sl.player.avg_points)
-    return {pos: sum(vals) / len(vals) for pos, vals in by_pos.items() if vals}
-
-
 def position_ppm_benchmark(world: World, position_id: int, exclude_id: str | None = None) -> float:
     """Mediana de puntos-por-millón entre los anuncios pujables de LaLiga en esa posición
     ahora mismo: la "tarifa" vigente de mercado por punto, referencia para el techo de puja
@@ -229,21 +220,16 @@ def bid_ceiling_report(world: World, player: models.Player) -> str:
     benchmark = position_ppm_benchmark(world, player.position_id, exclude_id=player.id)
     is_top = player.id in world.league_top_ids
     ceiling = analysis.bid_ceiling(player.avg_points, benchmark, is_top)
-    lines = [
-        f"{b(player.name)}  <i>{player.position} · {esc(player.team)}</i>",
-        f"Media: {player.avg_points:.1f} pts/partido",
-    ]
-    if benchmark:
-        lines.append(f"Tarifa de mercado en su posición: {benchmark:.2f} pts/M")
-    else:
-        lines.append(i("Sin referencia de mercado en su posición ahora mismo — techo poco fiable"))
-    if is_top:
-        lines.append("🌟 TOP de liga — prima de escasez aplicada (+30%)")
+    star = "🌟 " if is_top else ""
+    header = f"{star}{b(player.name)} <i>{player.position}·{esc(player.team)}</i> · {player.avg_points:.1f}p/partido"
+    header += f" · tarifa {benchmark:.2f}p/M" if benchmark else " · " + i("sin referencia de mercado en su posición")
+    lines = [header]
     if ceiling:
-        lines.append(f"{b('Techo de puja: ' + m(ceiling))}")
-        lines.append(i("Por encima de esto, aunque ganes la puja ciega, habría sido mejor negocio la alternativa del mercado."))
+        prima = " (+30% prima top)" if is_top else ""
+        lines.append(f"{b('Techo de puja: ' + m(ceiling))}{prima}")
+        lines.append(i("Por encima, mejor negocio la alternativa del mercado aunque ganes la puja ciega."))
     else:
-        lines.append(i("No hay datos suficientes para calcular un techo fiable ahora mismo."))
+        lines.append(i("Sin datos suficientes para un techo fiable ahora mismo."))
     return "\n".join(lines)
 
 
@@ -260,46 +246,30 @@ def find_player(api: FantasyAPI, world: World, player_id: str) -> models.Player 
         return None
 
 
-def _upgrade_reason(p: models.Player, my_avg_by_position: dict[int, float]) -> str:
-    """Motivo pensado hacia delante: lo que ya puntuó no te lo llevas tú, importa su media
-    de puntos por partido comparada con lo que ya tienes en esa posición."""
-    my_avg = my_avg_by_position.get(p.position_id)
-    if my_avg is None:
-        return f"Media {p.avg_points:.1f} pts/partido"
-    if p.avg_points > my_avg + 0.3:
-        return f"Media {p.avg_points:.1f} pts/partido, mejora tu media actual en {p.position} ({my_avg:.1f})"
-    return f"Media {p.avg_points:.1f} pts/partido (similar a tu media actual en {p.position}: {my_avg:.1f})"
-
-
 def market_report(world: World, min_score: float = 8.0) -> str:
     """Fichajes deportivos para tu once. Un TOP de la liga sale siempre, aunque su score sea
     bajo por precio: no es una cuestión de "compensa el precio", es que es de los mejores del
     campeonato en su puesto y te lo estás perdiendo si no lo ves. Lleva también su lado
     económico (tendencia y proyección a 14 días): fichar bien y que encima suba de valor
     no son cosas distintas, es la misma decisión."""
-    my_avg_by_position = _my_avg_by_position(world)
     cards = []
     for o in _opportunities(world):
         p = o.item.player
         is_top = p.id in world.league_top_ids
         if o.score < min_score and not is_top:
             continue
-        motivo = _upgrade_reason(p, my_avg_by_position)
-        if is_top:
-            motivo = "🌟 De los mejores de LaLiga en su posición. " + motivo
+        star = "🌟 " if is_top else ""
         trend = world.trends.get(p.id, (p, analysis.Trend(0, 0, 0)))[1]
         proj = analysis.project_value(o.item.price, trend)
         gain_pct = (proj - o.item.price) / o.item.price * 100 if o.item.price else 0
         cards.append(
-            f"{b(p.name)}  <i>{p.position} · {esc(p.team)}</i>\n"
-            f"Precio: {b(m(o.item.price))}\n"
-            f"{esc(motivo)}\n"
-            f"{i(f'{trend.label} · {trend.d7:+}% / 7d → a 14d ~{m(proj)} ({gain_pct:+.0f}%)')}"
+            f"{star}{b(p.name)} <i>{p.position}·{esc(p.team)}</i> · {b(m(o.item.price))} · "
+            f"{p.avg_points:.1f}p · {i(f'{trend.label} {trend.d7:+.0f}%/7d → {m(proj)} ({gain_pct:+.0f}%)')}"
         )
     if not cards:
         return ""
     head = f"{b('🛒 Mercado para tu once')}\n{i('Saldo disponible: ' + m(world.my_cash))}"
-    return head + "\n\n" + "\n\n".join(cards)
+    return head + "\n\n" + "\n".join(cards)
 
 
 def investment_report(world: World, top: int = 5) -> str:
@@ -322,13 +292,11 @@ def investment_report(world: World, top: int = 5) -> str:
         proj = analysis.project_value(item.price, t)
         gain_pct = (proj - item.price) / item.price * 100 if item.price else 0
         cards.append(
-            f"{b(p.name)}  <i>{esc(p.team)}</i>\n"
-            f"Precio ahora: {b(m(item.price))}\n"
-            f"Tendencia: {t.label} · {t.d7:+}% / 7d\n"
-            f"{i(f'Se blinda 14 días al comprarlo. A este ritmo, en 14 días: ~{m(proj)} ({gain_pct:+.0f}%)')}"
+            f"{b(p.name)} <i>{esc(p.team)}</i> · {b(m(item.price))} · "
+            f"{i(f'{t.label} {t.d7:+.0f}%/7d → 14d ~{m(proj)} ({gain_pct:+.0f}%)')}"
         )
     head = f"{b('💹 Oportunidades de inversión')}\n{i('Comprar y revender, no para tu once')}"
-    return head + "\n\n" + "\n\n".join(cards)
+    return head + "\n\n" + "\n".join(cards)
 
 
 def trends_report(world: World) -> str:
@@ -340,17 +308,17 @@ def trends_report(world: World) -> str:
     if my_falling:
         lines.append(
             f"{b('⚠️ Véndelos antes de que bajen más')}\n"
-            + "\n".join(f"{b(p.name)} <i>{t.d3:+}% / 3d</i>" for p, t in my_falling)
+            + "\n".join(f"{b(p.name)} {i(f'{t.d3:+.0f}%/3d')}" for p, t in my_falling)
         )
     peaking = analysis.sell_high_candidates(world.trends, mine)
     if peaking:
         lines.append(
             f"{b('🏔️ En máximo, véndelos ya')}\n"
-            + "\n".join(f"{b(p.name)} <i>+{t.d7:.0f}% / 7d</i>" for p, t in peaking)
+            + "\n".join(f"{b(p.name)} {i(f'+{t.d7:.0f}%/7d')}" for p, t in peaking)
         )
     if not lines:
         return ""
-    return f"{b('📊 Tus jugadores: vender o mantener')}\n\n" + "\n\n".join(lines)
+    return f"{b('📊 Tus jugadores: vender o mantener')}\n\n" + "\n".join(lines)
 
 
 def market_arrivals_report(world: World, store) -> str:
@@ -384,15 +352,13 @@ def market_arrivals_report(world: World, store) -> str:
         proj = analysis.project_value(item.price, trend)
         gain_pct = (proj - item.price) / item.price * 100 if item.price else 0
         stars_str = "★" * stars + "☆" * (4 - stars)
-        motivos = "\n".join(f"• {esc(r)}" for r in reasons)
+        detail = " · ".join(esc(r) for r in reasons) + f" · a 14d ~{m(proj)} ({gain_pct:+.0f}%)"
         cards.append(
-            f"{b(p.name)}  <i>{p.position} · {esc(p.team)}</i>\n"
-            f"Precio: {b(m(item.price))} · {stars_str} {label}\n"
-            f"{motivos}\n"
-            f"{i(f'{trend.label} · {trend.d7:+}% / 7d → a 14d ~{m(proj)} ({gain_pct:+.0f}%)')}"
+            f"{b(p.name)} <i>{p.position}·{esc(p.team)}</i> · {b(m(item.price))} · {stars_str} {label}\n"
+            f"{i(detail)}"
         )
     head = f"{b('🗞️ Nuevo en el mercado')}\n{i('Estudio de viabilidad')}"
-    return head + "\n\n" + "\n\n".join(cards)
+    return head + "\n\n" + "\n".join(cards)
 
 
 def losing_positions_report(world: World, store) -> str:
@@ -408,11 +374,10 @@ def losing_positions_report(world: World, store) -> str:
     for slot, buy, loss_pct in candidates:
         p = slot.player
         cards.append(
-            f"{b(p.name)}\n"
-            f"Comprado por: {m(buy)} · Ahora: {m(p.market_value)}\n"
-            f"{i(f'Pérdida: -{loss_pct:.0f}% ({m(buy - p.market_value)})')}"
+            f"{b(p.name)} · {m(buy)} → {m(p.market_value)} · "
+            f"{i(f'-{loss_pct:.0f}% ({m(buy - p.market_value)})')}"
         )
-    return f"{b('🔻 Corta pérdidas')}\n{i('Por debajo de lo que pagaste')}\n\n" + "\n\n".join(cards)
+    return f"{b('🔻 Corta pérdidas')}\n{i('Por debajo de lo que pagaste')}\n\n" + "\n".join(cards)
 
 
 def sell_candidates_report(world: World, store) -> str:
@@ -431,12 +396,11 @@ def sell_candidates_report(world: World, store) -> str:
         trend = trends[p.id]
         diff_pct = (p.market_value - buy) / buy * 100 if buy else 0
         cards.append(
-            f"{b(p.name)}\n"
-            f"Comprado por: {m(buy)} · Ahora: {m(p.market_value)} ({diff_pct:+.0f}%)\n"
-            f"{i(f'Bajando: {trend.d1:+.1f}% / 1d, {trend.d3:+.1f}% / 3d')}"
+            f"{b(p.name)} · {m(buy)} → {m(p.market_value)} ({diff_pct:+.0f}%) · "
+            f"{i(f'{trend.d1:+.1f}%/1d, {trend.d3:+.1f}%/3d')}"
         )
     head = f"{b('📉 Candidatos a vender')}\n{i('Tendencia bajando 3 días — no esperar a que caiga más')}"
-    return head + "\n\n" + "\n\n".join(cards)
+    return head + "\n\n" + "\n".join(cards)
 
 
 def rivals_report(world: World, rival_cash: dict[str, int] | None = None) -> str:
@@ -503,13 +467,9 @@ def clause_theft_report(world: World, rival_cash: dict[str, int]) -> str:
     for slot, threats in risky:
         p = slot.player
         threat_names = esc(", ".join(names_by_team.get(t, t) for t in threats))
-        cards.append(
-            f"{b(p.name)}\n"
-            f"Cláusula: {b(m(slot.clause))}\n"
-            f"{i('Podrían pagarla: ' + threat_names)}"
-        )
+        cards.append(f"{b(p.name)} · {b(m(slot.clause))} · {i('podrían pagarla: ' + threat_names)}")
     head = f"{b('⚠️ Riesgo de que te clausulen')}\n{i('Saldo estimado, puede desviarse')}"
-    return head + "\n\n" + "\n\n".join(cards)
+    return head + "\n\n" + "\n".join(cards)
 
 
 def ensure_clause_trends(api: FantasyAPI, world: World, s: Settings) -> None:
@@ -544,7 +504,7 @@ def clauses_report(world: World, s: Settings, news: dict[str, dict] | None = Non
         frozen_note = f"\n\n{i(f'⏸️ Cláusulas congeladas hasta las {until} (empieza la jornada)')}"
     if not alerts:
         return f"{b('🔐 Cláusulas')}\n{i(f'Nada relevante en las próximas {s.clause_window_hours}h')}{frozen_note}", alerts
-    return f"{b('🔐 Cláusulas')}\n\n" + "\n\n".join(a.message for a in alerts) + frozen_note, alerts
+    return f"{b('🔐 Cláusulas')}\n\n" + "\n".join(a.message for a in alerts) + frozen_note, alerts
 
 
 def ensure_speculative_trends(api: FantasyAPI, world: World, s: Settings) -> None:
@@ -570,7 +530,7 @@ def speculative_clauses_report(world: World, s: Settings) -> tuple[str, list[ana
     if not alerts:
         return "", alerts
     head = f"{b('📈 Cláusulas especulativas')}\n{i('Alto riesgo: racha fuerte, pero por encima de mercado')}"
-    return head + "\n\n" + "\n\n".join(a.message for a in alerts), alerts
+    return head + "\n\n" + "\n".join(a.message for a in alerts), alerts
 
 
 def _player_name(api: FantasyAPI, world: World, player_id: str) -> str:
@@ -703,9 +663,7 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
         lines.append(b(group_names[pos_id]))
         for c in group:
             lines.append(
-                f"{b(c.player.name)}\n"
-                f"🎯 {c.start_prob:.0%} titular · 📊 {c.xpts} pts esperados\n"
-                f"{_rival_name(world, c.player.team_id)}\n"
+                f"{b(c.player.name)} · {c.start_prob:.0%} · {c.xpts}p · {_rival_name(world, c.player.team_id)}"
             )
     risky = [c for c in eleven if c.start_prob < 0.6]
     if risky:
