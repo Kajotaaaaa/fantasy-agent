@@ -47,6 +47,9 @@ jobs:
         run: python -m fantasy_agent snipe
         env:
           SNIPE_MODE: ${{ vars.SNIPE_MODE }}
+          # Jugadores a los que NO se rebaja la puja (nombres o ids separados por comas). Los TOP de
+          # liga ya van protegidos solos.
+          SNIPE_SKIP: ${{ vars.SNIPE_SKIP }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           FANTASY_LEAGUE_ID: ${{ secrets.FANTASY_LEAGUE_ID }}

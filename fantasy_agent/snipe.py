@@ -16,6 +16,7 @@ haría. Además de decidir, toma lecturas a T-30s, T-10s, T-3s, T+15s y T+90s pa
 comporta el contador de pujas y a qué hora cierra de verdad la subasta."""
 from __future__ import annotations
 
+import os
 import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -36,12 +37,25 @@ def close_time(item: models.MarketItem) -> datetime | None:
     return item.expires - CLOSE_LEAD if item.expires else None
 
 
-def plan_reductions(items: list[models.MarketItem]) -> list[tuple[models.MarketItem, int]]:
+def is_protected(item: models.MarketItem, top_ids: set[str], skip: set[str]) -> bool:
+    """Jugadores a los que NO se les rebaja la puja aunque estés solo: los TOP de LaLiga en su
+    posición (un Lamine Yamal: si un rival puja en los últimos 10 s por encima del mínimo, con la
+    puja rebajada lo pierdes; con la tuya alta, no) y los de la lista manual `SNIPE_SKIP`
+    (nombres o ids separados por comas)."""
+    p = item.player
+    return p.id in top_ids or p.id in skip or p.name.strip().lower() in skip
+
+
+def plan_reductions(
+    items: list[models.MarketItem], top_ids: set[str] | None = None, skip: set[str] | None = None,
+) -> list[tuple[models.MarketItem, int]]:
     """Anuncios donde solo has pujado tú y tu puja está por encima del mínimo válido de ahora:
-    (anuncio, cantidad a la que bajarla)."""
+    (anuncio, cantidad a la que bajarla). Se saltan los protegidos (`is_protected`)."""
     out = []
     for it in items:
         if it.seller != "LaLiga" or not it.my_bid_id or it.bids != 1:
+            continue
+        if is_protected(it, top_ids or set(), skip or set()):
             continue
         minimum = service.bid_amount(it)
         if it.my_bid > minimum:
@@ -84,6 +98,8 @@ def run(api: FantasyAPI, s: Settings, mode: str, close_in: float | None = None) 
     cercano)."""
     live = mode == "on"
     league_id, _, _ = service.resolve_league(api, s)
+    top_ids = service.league_top_ids(api)
+    skip = {x.strip().lower() for x in (os.environ.get("SNIPE_SKIP") or "").split(",") if x.strip()}
     offset = _server_offset()
     now = lambda: datetime.now(timezone.utc) + offset  # noqa: E731
 
@@ -114,7 +130,10 @@ def run(api: FantasyAPI, s: Settings, mode: str, close_in: float | None = None) 
         items = snapshot()
         shots[off] = items
         if off == ACT_AT:
-            for it, amount in plan_reductions(items):
+            for it in items:
+                if it.my_bid_id and it.bids == 1 and is_protected(it, top_ids, skip):
+                    done.append(f"🛡️ {it.player.name}: se queda en {service.m(it.my_bid)} (protegido: TOP de liga o en SNIPE_SKIP)")
+            for it, amount in plan_reductions(items, top_ids, skip):
                 if live:
                     try:
                         api.update_bid(league_id, it.listing_id, it.my_bid_id, amount)

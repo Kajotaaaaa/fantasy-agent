@@ -33,7 +33,12 @@ más; riesgo = que alguien puje en el último segundo tras la lectura.
   y las manda por Telegram: sirve para confirmar (1) que `numberOfBids` cuenta también las
   pujas de los rivales (a las 17:00 del 21/09 solo existía la mía) y (2) a qué hora cierra de
   verdad (¿los anuncios cambian a las 21:00:00 o siguen abiertos hasta las 21:02?).
-- Primera noche (21/09): solo sombra. Activarlo de verdad = crear `SNIPE_MODE=on`.
+- **Excepciones (no se rebaja aunque estés solo):** los TOP de LaLiga en su posición
+  (`service.league_top_ids`, p. ej. un Lamine Yamal: con la puja bajada, quien puje en los
+  últimos 10 s por encima del mínimo te lo quita) y los de la variable `SNIPE_SKIP` (nombres o
+  ids separados por comas). El resumen los marca con 🛡️.
+- Primera noche (21/09): solo sombra. Activarlo de verdad = crear `SNIPE_MODE=on` (el usuario
+  lo creó esa misma tarde y pujó 16M por Yuri, mínimo 15.52M, para probar la rebaja).
 - Prueba local: `python -m fantasy_agent snipe --close-in 40` (cierre ficticio; en sombra).
 
 ## Flipeo autónomo (`flip.py`) — la única parte que mueve dinero sin confirmar

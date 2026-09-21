@@ -182,6 +182,10 @@ class Tests(unittest.TestCase):
         ]
         plan = snipe.plan_reductions(items)
         self.assertEqual([(it.listing_id, amount) for it, amount in plan], [("S1", 10_000_000)])
+        # Protegidos: TOP de liga (por id) o lista manual (por nombre o id): se dejan como están.
+        self.assertEqual(snipe.plan_reductions(items, top_ids={"s1"}), [])
+        self.assertEqual(snipe.plan_reductions(items, skip={"snipe1"}), [])
+        self.assertEqual(snipe.plan_reductions(items, skip={"s1"}), [])
         # El cierre real es 2 minutos antes del expirationDate (21:00 vs 21:02).
         self.assertEqual(snipe.close_time(items[0]), items[0].expires - timedelta(minutes=2))
 
