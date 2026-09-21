@@ -17,6 +17,12 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   de la liga privada no es pujable entre nosotros: a esos solo se llega pagando su cláusula.
 - **Cláusula "lógica"** = precio de cláusula ≤ ~1.2x el valor de mercado real (si no, aunque
   sea una estrella, no compensa — ver `analysis.clause_alerts`, `max_ratio`).
+- **Veredicto propio (1-4 estrellas)**: cada alerta de cláusula no es un ratio suelto, es un
+  criterio del bot que junta precio, rendimiento (media pts/partido), racha de valor a 7 días
+  y noticias reales del día (lesión/duda/titular casi seguro vía `futbolfantasy.py`) más
+  potencial de reventa a 14 días. Ver `analysis.clause_verdict`. Las noticias/tendencia solo
+  se piden para quien pasa antes el filtro económico barato (`analysis.clause_candidate_players`,
+  `service.ensure_clause_trends`) — no para los 30+ rivales de la liga.
 - **Blindaje**: un jugador puede estar `isShielded` con `shieldedEndDate` — mientras dure, su
   cláusula NO es pagable aunque `buyoutClauseLockedEndTime` ya haya pasado. Ver `SquadSlot.clause_open`.
 - **Congelación de jornada**: la liga bloquea TODAS las cláusulas desde 24h antes del primer

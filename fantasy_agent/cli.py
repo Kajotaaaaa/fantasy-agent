@@ -75,9 +75,16 @@ def _world(api, s, trends=True):
 def cmd_section(args, s) -> None:
     api = FantasyAPI(s)
     world = _world(api, s, trends=args.cmd in ("market", "trends", "report"))
-    news = None
+    if args.cmd in ("clauses", "report"):
+        service.ensure_clause_trends(api, world, s)
+
+    news_targets = []
     if args.cmd in ("lineup", "report") and getattr(args, "news", False):
-        news = estimate_titularidad(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5])
+        news_targets += [sl.player for sl in world.my_slots if sl.player.position_id != 5]
+    if args.cmd in ("clauses", "report"):
+        news_targets += service.clause_titularidad_candidates(world, s)
+    news = estimate_titularidad(api, news_targets) if news_targets else None
+
     if args.cmd == "report":
         sections = service.report_sections(world, s, news)
         print("\n\n".join(sections))
@@ -88,29 +95,37 @@ def cmd_section(args, s) -> None:
         "market": lambda: service.market_report(world),
         "trends": lambda: service.trends_report(world),
         "rivals": lambda: service.rivals_report(world),
-        "clauses": lambda: service.clauses_report(world, s)[0],
+        "clauses": lambda: service.clauses_report(world, s, news)[0],
         "lineup": lambda: service.lineup_report(world, news),
     }[args.cmd]()
     _out(s, text, args.telegram)
 
 
 def _watch_once(store: Store, s) -> str:
-    """Una pasada: alertas de cláusula siempre, informe completo si toca hoy."""
+    """Una pasada: alertas de cláusula siempre (con veredicto propio: precio, racha y
+    noticias reales de los candidatos), informe completo si toca hoy."""
     now = datetime.now()
     today = now.strftime("%Y-%m-%d")
     daily_due = now.hour >= s.report_hour and store.get("last_daily") != today
     api = FantasyAPI(s)
     world = _world(api, s, trends=daily_due)
+    service.ensure_clause_trends(api, world, s)
 
-    _, alerts = service.clauses_report(world, s)
+    clause_news = {}
+    try:
+        clause_news = estimate_titularidad(api, service.clause_titularidad_candidates(world, s))
+    except Exception as exc:
+        print(f"[titularidad] error cláusulas: {exc}")
+
+    _, alerts = service.clauses_report(world, s, clause_news)
     fresh = [a for a in alerts if store.alert_is_new(a.key)]
     if fresh:
         notify.send_telegram(s, "🚨 ALERTAS\n" + "\n".join(a.message for a in fresh))
 
     if daily_due:
-        news = None
+        news = dict(clause_news)
         try:
-            news = estimate_titularidad(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5])
+            news.update(estimate_titularidad(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5]))
         except Exception as exc:
             print(f"[titularidad] error: {exc}")
         notify.send_report(s, service.report_sections(world, s, news))

@@ -279,11 +279,31 @@ def rivals_report(world: World) -> str:
     return "\n".join(lines)
 
 
-def clauses_report(world: World, s: Settings) -> tuple[str, list[analysis.ClauseAlert]]:
+def ensure_clause_trends(api: FantasyAPI, world: World, s: Settings) -> None:
+    """Pide histórico de valor solo para quien de verdad puede acabar en una alerta de
+    cláusula (el filtro económico barato ya lo acota) — no para los 30+ rivales de la liga."""
     now = datetime.now(timezone.utc)
+    for p in analysis.clause_candidate_players(world.rival_slots, now, s.clause_window_hours):
+        if p.id in world.trends:
+            continue
+        try:
+            hist = models.parse_value_history(api.market_value_history(p.id))
+            world.trends[p.id] = (p, analysis.trend_from_history(hist))
+        except Exception as exc:
+            print(f"[aviso] sin histórico para {p.name}: {exc}")
+
+
+def clause_titularidad_candidates(world: World, s: Settings) -> list[models.Player]:
+    now = datetime.now(timezone.utc)
+    return analysis.clause_candidate_players(world.rival_slots, now, s.clause_window_hours)
+
+
+def clauses_report(world: World, s: Settings, news: dict[str, dict] | None = None) -> tuple[str, list[analysis.ClauseAlert]]:
+    now = datetime.now(timezone.utc)
+    trends = {pid: t for pid, (_, t) in world.trends.items()}
     alerts = analysis.clause_alerts(
         world.rival_slots, world.my_cash, now, s.clause_window_hours,
-        freeze=world.clause_freeze,
+        freeze=world.clause_freeze, trends=trends, news=news,
     )
     frozen_note = ""
     if world.clause_freeze and world.clause_freeze[0] <= now < world.clause_freeze[1]:
@@ -358,7 +378,7 @@ def report_sections(world: World, s: Settings, news: dict[str, dict] | None) -> 
     if market_parts:
         sections.append("\n\n".join(market_parts))
 
-    clauses_text, alerts = clauses_report(world, s)
+    clauses_text, alerts = clauses_report(world, s, news)
     if alerts:
         sections.append(clauses_text)
 

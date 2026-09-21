@@ -113,6 +113,7 @@ class ClauseAlert:
     slot: SquadSlot
     message: str
     tier: str = ""  # p.ej. "6h": para que la misma cláusula pueda avisar varias veces al acercarse
+    stars: int = 0  # veredicto 1-4, ver `clause_verdict`
 
     @property
     def key(self) -> str:
@@ -138,25 +139,18 @@ def _fmt_when(until: datetime, now: datetime) -> str:
     return f"el {until.astimezone().strftime('%d/%m %H:%M')}"
 
 
-def clause_alerts(
+def _clause_filter(
     rival_slots: list[SquadSlot],
-    my_cash: int | None,
     now: datetime,
-    window_hours: int = 24,
-    min_quality_avg: float = 3.0,
-    max_ratio: float = 1.2,
-    freeze: tuple[datetime, datetime] | None = None,
-) -> list[ClauseAlert]:
-    """Solo cláusulas "lógicas": el precio de la cláusula no puede estar muy por encima del valor
-    de mercado real del jugador (si no, aunque sea una estrella, no compensa pagarla). Solo mira
-    rivales — lo tuyo (blindar, arriesgarte) lo decides tú, no hace falta que te lo repitamos.
-    `freeze` es la ventana en la que la propia liga bloquea TODAS las cláusulas (24h antes del
-    primer partido de la jornada): un jugador "libre" según su cláusula puede seguir sin ser
-    pagable si caemos dentro de esa ventana."""
-    alerts: list[ClauseAlert] = []
+    window_hours: int,
+    min_quality_avg: float,
+    max_ratio: float,
+) -> list[tuple[SquadSlot, float, str]]:
+    """Filtro económico barato (ratio cláusula/mercado, calidad, ventana de tiempo), sin mirar
+    tendencia ni noticias todavía. Lo reutilizan `clause_candidate_players` (para saber a quién
+    merece la pena pedirle datos extra) y `clause_alerts` (para construir el veredicto)."""
     tiers = [h for h in UNLOCK_ALERT_TIERS_HOURS if h <= window_hours] or [window_hours]
-    frozen_now = bool(freeze and freeze[0] <= now < freeze[1])
-
+    out = []
     for slot in rival_slots:
         p = slot.player
         if p.position_id == 5 or not p.market_value:
@@ -171,24 +165,161 @@ def clause_alerts(
             matched = next((h for h in sorted(tiers) if hours_left <= h), None)
             if matched is None:
                 continue
-            estado = f"se libera {_fmt_when(until, now)}"
             tier = f"{matched}h"
+        out.append((slot, ratio, tier))
+    return out
+
+
+def clause_candidate_players(
+    rival_slots: list[SquadSlot],
+    now: datetime,
+    window_hours: int = 24,
+    min_quality_avg: float = 3.0,
+    max_ratio: float = 1.2,
+) -> list[Player]:
+    """Quién podría acabar en una alerta de cláusula, mirando solo el filtro barato. El
+    llamador usa esto para pedir tendencia de valor y noticias (titularidad/lesión) SOLO de
+    estos jugadores, no de los 30+ rivales de la liga."""
+    seen: dict[str, Player] = {}
+    for slot, _ratio, _tier in _clause_filter(rival_slots, now, window_hours, min_quality_avg, max_ratio):
+        seen[slot.player.id] = slot.player
+    return list(seen.values())
+
+
+def clause_verdict(
+    p: Player,
+    ratio: float,
+    trend: Trend | None,
+    news: dict | None,
+) -> tuple[int, str, list[str]]:
+    """El criterio propio del bot sobre una cláusula: no un ratio suelto, sino un veredicto de
+    1 a 4 estrellas que junta precio, rendimiento, racha de valor, noticias reales del día
+    (lesión/duda/titular casi seguro) y potencial de reventa a 14 días — con los motivos
+    explicados para que se pueda revisar el razonamiento, no solo el número."""
+    trend = trend or Trend(0.0, 0.0, 0.0)
+    points = 0.0
+    reasons: list[str] = []
+
+    if ratio <= 0.85:
+        points += 2.0
+        reasons.append(f"Cláusula muy por debajo de mercado (x{ratio:.2f})")
+    elif ratio <= 1.0:
+        points += 1.5
+        reasons.append(f"Cláusula por debajo de mercado (x{ratio:.2f})")
+    elif ratio <= 1.1:
+        points += 1.0
+        reasons.append(f"Cláusula ajustada al valor de mercado (x{ratio:.2f})")
+    else:
+        points += 0.5
+        reasons.append(f"Cláusula algo cara pero aún razonable (x{ratio:.2f})")
+
+    if p.avg_points >= 7:
+        points += 1.5
+        reasons.append(f"Rendimiento muy alto ({p.avg_points:.1f} pts/partido de media)")
+    elif p.avg_points >= 5:
+        points += 1.0
+        reasons.append(f"Buen rendimiento ({p.avg_points:.1f} pts/partido de media)")
+    else:
+        reasons.append(f"Rendimiento correcto ({p.avg_points:.1f} pts/partido de media)")
+
+    if trend.d7 >= 5:
+        points += 1.5
+        reasons.append(f"En racha: su valor sube fuerte ({trend.d7:+.1f}% en 7 días)")
+    elif trend.d7 >= 1:
+        points += 0.7
+        reasons.append(f"Tendencia de valor positiva ({trend.d7:+.1f}% en 7 días)")
+    elif trend.d7 <= -5:
+        points -= 1.0
+        reasons.append(f"Ojo: su valor está cayendo ({trend.d7:+.1f}% en 7 días)")
+
+    if news:
+        status = news.get("status")
+        note = news.get("note", "")
+        prob = news.get("start_probability")
+        if status == "lesionado":
+            points -= 3.0
+            reasons.append(f"⚠️ Lesionado según noticias de hoy: {note}")
+        elif status == "duda":
+            points -= 1.5
+            reasons.append(f"⚠️ Duda para el once según noticias: {note}")
+        elif prob is not None and prob >= 75:
+            points += 1.0
+            reasons.append(f"Buenas noticias: titular casi seguro ({prob}%)")
+    else:
+        reasons.append("Sin noticias de hoy contrastadas para este jugador")
+
+    if p.market_value:
+        proj = project_value(p.market_value, trend, 14)
+        gain_pct = (proj - p.market_value) / p.market_value * 100
+        if gain_pct >= 10:
+            points += 1.0
+            reasons.append(f"Buen potencial de reventa: ~{_fmt_m(proj)} en 14 días ({gain_pct:+.0f}%)")
+        elif gain_pct >= 3:
+            points += 0.5
+            reasons.append(f"Algo de potencial de reventa a 14 días (~{gain_pct:+.0f}%)")
+
+    if points >= 5.5:
+        stars, label = 4, "🔥 Clausúrale ya"
+    elif points >= 3.5:
+        stars, label = 3, "✅ Buena oportunidad"
+    elif points >= 2.0:
+        stars, label = 2, "🤔 Con reservas"
+    else:
+        stars, label = 1, "🚫 No compensa"
+    return stars, label, reasons
+
+
+def clause_alerts(
+    rival_slots: list[SquadSlot],
+    my_cash: int | None,
+    now: datetime,
+    window_hours: int = 24,
+    min_quality_avg: float = 3.0,
+    max_ratio: float = 1.2,
+    freeze: tuple[datetime, datetime] | None = None,
+    trends: dict[str, Trend] | None = None,
+    news: dict[str, dict] | None = None,
+) -> list[ClauseAlert]:
+    """Solo cláusulas "lógicas" (ver `_clause_filter`). Solo mira rivales — lo tuyo (blindar,
+    arriesgarte) lo decides tú, no hace falta que te lo repitamos. `freeze` es la ventana en la
+    que la propia liga bloquea TODAS las cláusulas (24h antes del primer partido de la jornada):
+    un jugador "libre" según su cláusula puede seguir sin ser pagable si caemos dentro de esa
+    ventana. `trends`/`news` son opcionales (id de jugador -> Trend / info de titularidad) y
+    alimentan el veredicto de `clause_verdict`; sin ellos, el veredicto se basa solo en precio
+    y rendimiento."""
+    alerts: list[ClauseAlert] = []
+    frozen_now = bool(freeze and freeze[0] <= now < freeze[1])
+    trends = trends or {}
+    news = news or {}
+
+    for slot, ratio, tier in _clause_filter(rival_slots, now, window_hours, min_quality_avg, max_ratio):
+        p = slot.player
+        until = slot.clause_locked_until
+        if until and until > now:
+            estado = f"se libera {_fmt_when(until, now)}"
         elif slot.clause_open(now) and not frozen_now and (my_cash is None or slot.clause <= my_cash):
             estado = "pagable ya"
         else:
             continue
+
+        stars, label, reasons = clause_verdict(p, ratio, trends.get(p.id), news.get(p.id))
+        stars_str = "★" * stars + "☆" * (4 - stars)
+        motivos = "\n".join(f"- {r}" for r in reasons)
         alerts.append(ClauseAlert(
             "open_affordable" if slot.clause_open(now) else "unlock_soon", slot,
             f"{p.name}\n"
             f"Dueño: {slot.owner_name}\n"
-            f"Valor de mercado: {_fmt_m(p.market_value)}\n"
-            f"Cláusula: {_fmt_m(slot.clause)} (x{ratio:.2f} el valor)\n"
-            f"Estado: {estado}",
+            f"{stars_str} {label}\n"
+            f"Cláusula: {_fmt_m(slot.clause)} (mercado: {_fmt_m(p.market_value)}, x{ratio:.2f})\n"
+            f"Estado: {estado}\n"
+            f"Por qué:\n{motivos}",
             tier=tier,
+            stars=stars,
         ))
 
-    # Primero las que ya puedes pagar; luego las que faltan por liberarse, de más cerca a más lejos.
-    alerts.sort(key=lambda a: (a.kind != "open_affordable", a.slot.clause_locked_until or now))
+    # Primero las que ya puedes pagar; entre iguales, mejor veredicto primero; luego, de más
+    # cerca a más lejos de liberarse.
+    alerts.sort(key=lambda a: (a.kind != "open_affordable", -a.stars, a.slot.clause_locked_until or now))
     return alerts
 
 
