@@ -723,13 +723,59 @@ def reconstruct_cash_flow(events: list[Activity], manager_id: str) -> int:
     return total
 
 
-def estimate_cash(events: list[Activity], my_manager_id: str, my_cash: int, manager_ids: dict[str, str]) -> dict[str, int]:
+def initial_squad_ids(events: list[Activity], manager_id: str, current_ids: set[str]) -> set[str]:
+    """Los jugadores con los que arrancó un mánager (el juego da una plantilla inicial que NO
+    sale en el historial): los que su primer movimiento fue perderlos (venderlos o que se los
+    clausulen) sin haberlos fichado antes, más los de su plantilla de hoy que nunca han tenido
+    un movimiento suyo. Requiere el historial completo desde el arranque de la liga."""
+    def gained(e: Activity) -> bool:
+        return e.user1_id == manager_id and e.type_id in (ACTIVITY_BUY, ACTIVITY_CLAUSE)
+
+    def lost(e: Activity) -> bool:
+        return (e.type_id == ACTIVITY_SELL and e.user1_id == manager_id) or (
+            e.type_id == ACTIVITY_CLAUSE and e.user2_id == manager_id
+        )
+
+    got: set[str] = set()
+    initial: set[str] = set()
+    touched: set[str] = set()
+    for e in sorted(events, key=lambda ev: (ev.when, int(ev.id))):
+        if not e.player_id:
+            continue
+        if gained(e):
+            got.add(e.player_id)
+            touched.add(e.player_id)
+        elif lost(e):
+            touched.add(e.player_id)
+            if e.player_id not in got:
+                initial.add(e.player_id)
+    return initial | {p for p in current_ids if p not in touched}
+
+
+def estimate_cash(
+    events: list[Activity],
+    my_manager_id: str,
+    my_cash: int,
+    manager_ids: dict[str, str],
+    initial_values: dict[str, int] | None = None,
+) -> dict[str, int]:
     """Saldo estimado de cada equipo (`manager_ids`: team_id -> manager_id), calibrado con tu
-    saldo real (el único que la API expone): se asume que todos los equipos empezaron con el
-    mismo presupuesto, y se despeja ese presupuesto a partir de tu propio flujo neto conocido.
-    Es una estimación — si algún equipo empezó con un presupuesto distinto al tuyo, o hay algún
-    tipo de movimiento de dinero que no reconocemos todavía, se desvía."""
+    saldo real (el único que la API expone).
+    Con `initial_values` (manager_id -> valor de su plantilla inicial): todos los mánagers
+    arrancan con el MISMO valor total = plantilla inicial + dinero (regla del juego, según el
+    usuario), así que el dinero inicial de cada uno es ese valor común menos su plantilla. El
+    valor común se despeja con tu saldo real, y queda: saldo_rival = tu saldo + (tu plantilla
+    inicial - la suya) + (su flujo - el tuyo). Sin `initial_values` se cae al supuesto (falso)
+    de que todos empezaron con el mismo dinero.
+    Es una estimación: hay ~43-60M de salidas de dinero tuyas que el historial no explica
+    (ver CLAUDE.md), y un rival puede compartirlas o no."""
     my_flow = reconstruct_cash_flow(events, my_manager_id)
+    if initial_values and my_manager_id in initial_values and all(m in initial_values for m in manager_ids.values()):
+        base = my_cash - my_flow + initial_values[my_manager_id]  # valor común V
+        return {
+            team_id: base - initial_values[mgr_id] + reconstruct_cash_flow(events, mgr_id)
+            for team_id, mgr_id in manager_ids.items()
+        }
     implied_start = my_cash - my_flow
     return {team_id: implied_start + reconstruct_cash_flow(events, mgr_id) for team_id, mgr_id in manager_ids.items()}
 

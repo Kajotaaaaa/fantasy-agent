@@ -336,14 +336,16 @@ def cmd_section(args, s) -> None:
         news_targets += service.clause_titularidad_candidates(world, s)
     news = estimate_titularidad(api, news_targets) if news_targets else None
 
-    store = Store(s.db_file) if args.cmd in ("report", "losses", "sell-candidates", "market-news", "listen") else None
+    store = Store(s.db_file) if args.cmd in (
+        "report", "losses", "sell-candidates", "market-news", "listen", "rivals", "clause-risk", "advice", "market",
+    ) else None
 
     rival_cash = {}
     if args.cmd in ("rivals", "clause-risk", "advice", "market"):
-        rival_cash = service.estimate_rival_cash(api, world)
+        rival_cash = service.estimate_rival_cash(api, world, store)
 
     if args.cmd == "report":
-        sections = service.report_sections(world, s, news, store, service.estimate_rival_cash(api, world))
+        sections = service.report_sections(world, s, news, store, service.estimate_rival_cash(api, world, store))
         print("\n\n".join(text for text, _ in sections))
         if args.telegram:
             notify.send_report(s, sections)
@@ -427,6 +429,13 @@ def _watch_once(store: Store, s) -> str:
     if tx:
         notify.send_telegram(s, "<b>📒 Movimientos en tu equipo</b>\n\n" + "\n\n".join(tx))
 
+    try:
+        audit = service.audit_my_cash(api, world, store)
+        if audit:
+            notify.send_telegram(s, audit)
+    except Exception as exc:
+        print(f"[auditoría] error: {exc}")
+
     flip_note = ""
     try:
         flip_note = flip.run(api, world, store, s, buy_now=daily_due, today=today)
@@ -449,7 +458,7 @@ def _watch_once(store: Store, s) -> str:
             print(f"[titularidad] error: {exc}")
         rival_cash = {}
         try:
-            rival_cash = service.estimate_rival_cash(api, world)
+            rival_cash = service.estimate_rival_cash(api, world, store)
         except Exception as exc:
             print(f"[aviso] sin saldo estimado de rivales: {exc}")
         notify.send_report(s, service.report_sections(world, s, news, store, rival_cash))

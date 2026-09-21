@@ -185,6 +185,30 @@ class Tests(unittest.TestCase):
         self.assertIsNone(flip.flip_amount(listing(5, 10_000_000), analysis.Trend(0.5, 0.5, 9.0)))  # cooling
         self.assertIsNone(flip.flip_amount(listing(6, 11_000_000), rising))  # pide 10% sobre su valor
 
+    def test_initial_squad_and_common_value_estimate(self):
+        def ev(n, type_id, u1, u2, pid, amount, day):
+            return models.Activity(str(n), type_id, u1, u2, pid, amount, NOW - timedelta(days=30 - day))
+
+        events = [
+            ev(1, 33, "A", None, "p1", 10_000_000, 1),   # A vende p1: era de su plantilla inicial
+            ev(2, 31, "A", None, "p9", 4_000_000, 2),    # A ficha p9
+            ev(3, 33, "A", None, "p9", 6_000_000, 3),    # ...y lo vende: NO era inicial
+            ev(4, 33, "B", None, "q1", 5_000_000, 1),    # B vende q1 (inicial)
+        ]
+        self.assertEqual(analysis.initial_squad_ids(events, "A", {"p2", "p9"}), {"p1", "p2"})
+        self.assertEqual(analysis.initial_squad_ids(events, "B", set()), {"q1"})
+
+        # A: flujo +12M, plantilla inicial 100M. B: flujo +5M, plantilla inicial 120M. Mismo valor
+        # total al arrancar: B empezó con 20M MENOS de dinero que A. Mi saldo (A) hoy = 50M, luego
+        # el de B = 50 + (100-120) + (5-12) = 23M. Sin plantillas iniciales, el supuesto simple
+        # (mismo dinero inicial) daría 50 + (5-12) = 43M.
+        teams = {"TA": "A", "TB": "B"}
+        est = analysis.estimate_cash(events, "A", 50_000_000, teams, {"A": 100_000_000, "B": 120_000_000})
+        self.assertEqual(est["TB"], 23_000_000)
+        self.assertEqual(est["TA"], 50_000_000)
+        simple = analysis.estimate_cash(events, "A", 50_000_000, teams)
+        self.assertEqual(simple["TB"], 43_000_000)
+
     def test_can_bid(self):
         m40 = analysis.CASH_UNCERTAINTY
         self.assertEqual(analysis.can_bid(15_000_000, 15_000_000 + m40), "yes")

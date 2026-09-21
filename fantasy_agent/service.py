@@ -1,6 +1,7 @@
 """Orquestación: descarga el estado de tu liga y genera informes y alertas."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 
@@ -624,14 +625,7 @@ def rivals_report(world: World, rival_cash: dict[str, int] | None = None) -> str
     return head + "\n\n" + "\n".join(cards)
 
 
-def estimate_rival_cash(api: FantasyAPI, world: World, max_pages: int = 20) -> dict[str, int]:
-    """Saldo estimado de cada equipo a partir del historial completo de movimientos
-    (`/activity`, paginado hacia atrás hasta que llega vacío): la API solo expone tu propio
-    saldo (`world.my_cash`), así que se reconstruye el de los rivales sumando compras, ventas,
-    cláusulas y bonos semanales desde el principio de temporada, calibrando el presupuesto de
-    partida con tu saldo real. Ver `analysis.estimate_cash` para el detalle y sus supuestos."""
-    if world.my_cash is None:
-        return {}
+def _all_activity(api: FantasyAPI, world: World, max_pages: int = 20) -> list[models.Activity]:
     events: list[models.Activity] = []
     for idx in range(max_pages):
         try:
@@ -642,12 +636,105 @@ def estimate_rival_cash(api: FantasyAPI, world: World, max_pages: int = 20) -> d
         if not raw:
             break
         events.extend(models.parse_activity(raw))
+    return events
 
+
+def initial_squad_values(api: FantasyAPI, world: World, events: list[models.Activity], store=None) -> dict[str, int]:
+    """Valor de la plantilla inicial de cada mánager (manager_id -> valor), al día en que se
+    unió a la liga. Es un dato fijo, así que se guarda en el `Store` (`sv0:<manager_id>`): la
+    primera vez cuesta ~14 llamadas de histórico por mánager, después nada. Si a algún jugador
+    no se le encuentra valor, ese mánager se omite (y el estimador cae al supuesto simple)."""
+    cached = {k: int(v) for k, v in store.prefixed("sv0:").items()} if store is not None else {}
+    mgr_of_team = {r.team_id: r.manager_id for r in world.standing}
+    current: dict[str, set[str]] = {}
+    for sl in (*world.my_slots, *world.rival_slots):
+        current.setdefault(mgr_of_team.get(sl.owner_team_id, ""), set()).add(sl.player.id)
+    out = dict(cached)
+    for mid in mgr_of_team.values():
+        if mid in out:
+            continue
+        joined = next((e.when for e in events if e.type_id == 9 and e.user1_id == mid and e.when), None)
+        if joined is None:
+            continue
+        total, complete = 0, True
+        for pid in analysis.initial_squad_ids(events, mid, current.get(mid, set())):
+            try:
+                hist = models.parse_value_history(api.market_value_history(pid))
+            except Exception:
+                complete = False
+                break
+            before = [v for d, v in hist if d <= joined]
+            value = before[-1] if before else (hist[0][1] if hist else 0)
+            if not value:
+                complete = False
+                break
+            total += value
+        if complete and total:
+            out[mid] = total
+            if store is not None:
+                store.set(f"sv0:{mid}", str(total))
+    return out
+
+
+def estimate_rival_cash(api: FantasyAPI, world: World, store=None) -> dict[str, int]:
+    """Saldo estimado de cada equipo a partir del historial completo de movimientos
+    (`/activity`, paginado hacia atrás hasta que llega vacío): la API solo expone tu propio
+    saldo (`world.my_cash`), así que se reconstruye el de los rivales sumando compras, ventas,
+    cláusulas y bonos semanales desde el principio de temporada. Todos arrancan con el mismo
+    valor total (plantilla inicial + dinero), calibrado con tu saldo real. Ver
+    `analysis.estimate_cash` para el detalle y sus supuestos."""
+    if world.my_cash is None:
+        return {}
+    events = _all_activity(api, world)
     my_manager_id = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), None)
     if not my_manager_id:
         return {}
     manager_ids = {r.team_id: r.manager_id for r in world.standing}
-    return analysis.estimate_cash(events, my_manager_id, world.my_cash, manager_ids)
+    initial = initial_squad_values(api, world, events, store)
+    return analysis.estimate_cash(events, my_manager_id, world.my_cash, manager_ids, initial or None)
+
+
+def audit_my_cash(api: FantasyAPI, world: World, store) -> str:
+    """Auditor del saldo: en cada vigilancia compara cuánto ha cambiado TU saldo real desde la
+    vez anterior con lo que predicen los movimientos nuevos del historial. Es la única forma de
+    localizar las salidas de dinero que el historial no explica (~43-60M en total, ver
+    CLAUDE.md): cada diferencia queda atribuida al tipo de movimiento que la acompaña. Devuelve
+    el aviso a mandar por Telegram ("" si no pasó nada)."""
+    my_id = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), None)
+    if not my_id or world.my_cash is None:
+        return ""
+    try:
+        events = models.parse_activity(api.activity(world.league_id, 0))
+    except Exception:
+        return ""
+    newest = max((models.to_int(e.id) for e in events), default=0)
+    prev_raw = store.get("cash_snap")
+    store.set("cash_snap", json.dumps({"cash": world.my_cash, "last_id": newest}))
+    if not prev_raw:
+        return ""
+    prev = json.loads(prev_raw)
+    new = [e for e in events if models.to_int(e.id) > prev["last_id"] and my_id in (e.user1_id, e.user2_id) and e.amount]
+    predicted = analysis.reconstruct_cash_flow(new, my_id)
+    actual = world.my_cash - prev["cash"]
+    residual = actual - predicted
+    if not new and abs(residual) < 1000:
+        return ""
+    kinds = {
+        models.ACTIVITY_BUY: "compra a LaLiga", models.ACTIVITY_SELL: "venta a LaLiga",
+        models.ACTIVITY_CLAUSE: "cláusula", models.ACTIVITY_WEEKLY_BONUS: "bono semanal",
+    }
+    what = ", ".join(f"{kinds.get(e.type_id, f'tipo {e.type_id}')} {m(e.amount)}" for e in new) or "ningún movimiento"
+    volume = sum(e.amount for e in new)
+    if abs(residual) < 1000:
+        verdict = "✅ Coincide exactamente"
+    else:
+        pct = f" ({residual / volume * 100:+.1f}% del importe)" if volume else ""
+        verdict = f"⚠️ Diferencia {m(residual)}{pct}"
+    store.set(f"audit:{newest}", json.dumps({"what": what, "actual": actual, "predicted": predicted, "residual": residual}))
+    return (
+        f"🔎 {b('Auditoría del saldo')}\n{esc(what)}\n"
+        f"El saldo cambió {m(actual)}; el historial decía {m(predicted)}.\n{verdict}"
+    )
 
 
 def clause_theft_report(world: World, rival_cash: dict[str, int]) -> str:

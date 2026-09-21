@@ -191,6 +191,23 @@ mismo).
   cobradas, 19.5% de las pagadas). No están localizados. El (-70M..) "saldo negativo imposible"
   que se anotó primero era un error: la deuda está permitida; lo sólido es la restricción de
   cláusulas.
+- **Modelo mejorado (mismo VALOR TOTAL inicial, no mismo dinero):** el juego da a cada mánager
+  una plantilla inicial (siempre 14 jugadores, comprobado en los 6) y el dinero justo hasta un
+  valor común. `analysis.initial_squad_ids` reconstruye esa plantilla a partir del historial
+  (jugadores cuyo primer movimiento fue perderlos + los de hoy sin movimientos) y
+  `service.initial_squad_values` los valora en la fecha en que el mánager se unió (histórico de
+  valores; se cachea en el Store como `sv0:<manager_id>`, ~14 llamadas por mánager la primera
+  vez). Valor de plantilla inicial: 130-143M por mánager. `estimate_cash` despeja el valor
+  común con tu saldo real: `saldo_rival = tu saldo + (tu plantilla inicial - la suya) + (su
+  flujo - el tuyo)`. Comprobación: (inicio mínimo por cláusulas + plantilla inicial) sale 216-240M
+  en los 6, o sea un valor común de ~240-250M compatible con todo. Cambió los saldos: C4STILL0FC
+  105→93M, dmoral08 8→4M, Paneq 31→19M, icb30 41→34M, paauu10 46→40M.
+- **Lo que sigue sin explicar:** con ese modelo tu propio saldo debería ser mayor de lo que es
+  en ~53-63M (según el valor común, 240-250M): una salida de dinero que el historial no recoge.
+  `service.audit_my_cash` (cada tick) compara el cambio REAL de tu saldo con lo que predicen
+  los movimientos nuevos y manda "🔎 Auditoría del saldo" (✅ coincide / ⚠️ diferencia con el %
+  del importe): tras unos días de compras, ventas y cláusulas se verá a qué tipo de movimiento
+  acompaña la diferencia. Guarda cada medida en el Store (`audit:<id>`).
 - Por eso el saldo estimado es ORIENTATIVO: `analysis.CASH_UNCERTAINTY` = 40M de margen, y
   `analysis.can_bid` clasifica seguro / dudoso / no (con pujas baratas casi todo es "dudoso").
   Para un rival el saldo real estaría entre lo estimado (inicio 57M) y ~43M más (inicio ~100M
