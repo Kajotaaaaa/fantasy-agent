@@ -406,25 +406,31 @@ def _my_bid_line(item: models.MarketItem) -> list[str]:
     return [f"📌 Tu puja pendiente: {b(m(item.my_bid))}"] if item.my_bid_id else []
 
 
+def _market_card(
+    world: World, item: models.MarketItem, trend: analysis.Trend, is_top: bool,
+    rival_cash: dict[str, int] | None = None,
+) -> tuple[str, dict | None]:
+    p = item.player
+    star = "🌟 " if is_top else ""
+    plan = _plan_for(world, item, trend, is_top, rival_cash=rival_cash)
+    text = "\n".join([
+        f"{star}{b(p.name)}  <i>{p.position} · {esc(p.team)}</i>",
+        f"💰 Mínimo {b(m(plan.minimum))} · {p.avg_points:.1f} pts/partido",
+        i(analysis.trend_words(trend)),
+        *_my_bid_line(item),
+        *_plan_lines(plan, item.bids),
+        *_rivals_line(world, plan.minimum, rival_cash),
+    ])
+    return text, _keyboard(_bid_rows(world, item, trend, is_top, rival_cash=rival_cash))
+
+
 def market_report(world: World, min_score: float = 8.0, rival_cash: dict[str, int] | None = None) -> str:
     """Fichajes deportivos para tu once. Un TOP de la liga sale siempre, aunque su score sea
     bajo por precio: no es una cuestión de "compensa el precio", es que es de los mejores del
     campeonato en su puesto y te lo estás perdiendo si no lo ves. Lleva también su lado
     económico (tendencia y proyección a 14 días): fichar bien y que encima suba de valor
     no son cosas distintas, es la misma decisión."""
-    cards = []
-    for item, trend, is_top in _market_picks(world, min_score):
-        p = item.player
-        star = "🌟 " if is_top else ""
-        plan = _plan_for(world, item, trend, is_top, rival_cash=rival_cash)
-        cards.append("\n".join([
-            f"{star}{b(p.name)}  <i>{p.position} · {esc(p.team)}</i>",
-            f"💰 Mínimo {b(m(plan.minimum))} · {p.avg_points:.1f} pts/partido",
-            i(analysis.trend_words(trend)),
-            *_my_bid_line(item),
-            *_plan_lines(plan, item.bids),
-            *_rivals_line(world, plan.minimum, rival_cash),
-        ]))
+    cards = [_market_card(world, item, trend, is_top, rival_cash)[0] for item, trend, is_top in _market_picks(world, min_score)]
     if not cards:
         return ""
     head = f"{b('🛒 Mercado para tu once')}\n{i('Saldo disponible: ' + m(world.my_cash))}"
@@ -438,37 +444,51 @@ def market_keyboard(world: World, min_score: float = 8.0, rival_cash: dict[str, 
     ])
 
 
+def _investment_card(
+    world: World, item: models.MarketItem, trend: analysis.Trend, rival_cash: dict[str, int] | None = None,
+) -> tuple[str, dict | None]:
+    p = item.player
+    plan = _plan_for(world, item, trend, False, with_ceiling=False, rival_cash=rival_cash)
+    text = "\n".join([
+        f"{b(p.name)}  <i>{esc(p.team)}</i>",
+        f"💰 Mínimo {b(m(plan.minimum))}",
+        i(analysis.trend_words(trend)),
+        *_my_bid_line(item),
+        *_plan_lines(plan, item.bids),
+        *_rivals_line(world, plan.minimum, rival_cash),
+    ])
+    return text, _keyboard(_bid_rows(world, item, trend, False, with_ceiling=False, rival_cash=rival_cash))
+
+
 def investment_report(world: World, top: int = 5, rival_cash: dict[str, int] | None = None) -> str:
     """Comprar barato y revender. Los TOP de la liga NO entran aquí: a esos los quieres
     para tu equipo, no para venderlos en 14 días."""
     picks = _investment_picks(world, top)
     if not picks:
         return ""
-    cards = []
-    for item, t in picks:
-        p = item.player
-        plan = _plan_for(world, item, t, False, with_ceiling=False, rival_cash=rival_cash)
-        cards.append("\n".join([
-            f"{b(p.name)}  <i>{esc(p.team)}</i>",
-            f"💰 Mínimo {b(m(plan.minimum))}",
-            i(analysis.trend_words(t)),
-            *_my_bid_line(item),
-            *_plan_lines(plan, item.bids),
-            *_rivals_line(world, plan.minimum, rival_cash),
-        ]))
+    cards = [_investment_card(world, item, t, rival_cash)[0] for item, t in picks]
     head = f"{b('💹 Oportunidades de inversión')}\n{i('Comprar y revender, no para tu once')}"
     return head + "\n\n" + "\n\n".join(cards)
 
 
-def buy_keyboard(world: World, rival_cash: dict[str, int] | None = None) -> dict | None:
-    """Botones de puja de las dos listas de compra (mercado para tu once + inversión). La
-    inversión es flipeo: sin botón de techo por puntos, solo mínimo, colchón y con margen."""
-    rows = [row for item, t, top in _market_picks(world) for row in _bid_rows(world, item, t, top, rival_cash=rival_cash)]
-    rows += [
-        row for item, t in _investment_picks(world)
-        for row in _bid_rows(world, item, t, False, with_ceiling=False, rival_cash=rival_cash)
-    ]
-    return _keyboard(rows)
+def buy_sections(world: World, min_score: float = 8.0, rival_cash: dict[str, int] | None = None) -> list[tuple[str, dict | None]]:
+    """Como `market_report`/`investment_report`, pero un mensaje de Telegram POR JUGADOR, cada
+    uno con su propio botón de puja justo debajo de su ficha — pedido del usuario (2026-09-22):
+    con varios candidatos en un solo mensaje largo, los botones amontonados al final no dejaban
+    ver cuál era de quién. El título de cada lista va pegado a la ficha del primer jugador, para
+    no mandar un mensaje suelto solo con la cabecera."""
+    sections: list[tuple[str, dict | None]] = []
+    picks = _market_picks(world, min_score)
+    head = f"{b('🛒 Mercado para tu once')}\n{i('Saldo disponible: ' + m(world.my_cash))}"
+    for idx, (item, trend, is_top) in enumerate(picks):
+        text, kb = _market_card(world, item, trend, is_top, rival_cash)
+        sections.append((f"{head}\n\n{text}" if idx == 0 else text, kb))
+    inv_picks = _investment_picks(world)
+    head2 = f"{b('💹 Oportunidades de inversión')}\n{i('Comprar y revender, no para tu once')}"
+    for idx, (item, trend) in enumerate(inv_picks):
+        text, kb = _investment_card(world, item, trend, rival_cash)
+        sections.append((f"{head2}\n\n{text}" if idx == 0 else text, kb))
+    return sections
 
 
 def trends_report(world: World) -> str:
@@ -1180,20 +1200,20 @@ def report_sections(
     world: World, s: Settings, news: dict[str, dict] | None, store=None, rival_cash: dict[str, int] | None = None,
 ) -> list[tuple[str, dict | None]]:
     """Un mensaje por especialidad (alineación / mercado / cláusulas...), listo para Telegram.
-    Cada entrada es (texto, teclado_o_None) — solo las cláusulas llevan botón. Las cláusulas
-    van una por mensaje (ver `clauses_report`), no agrupadas. Omite lo que no tenga nada
-    relevante que decir, para no mandar un tocho. `store` es opcional: sin él no se puede saber
-    qué pagaste por tus jugadores, así que se omite la sección de corta-pérdidas. `rival_cash`
-    opcional: sin él se omiten el riesgo de que te clausulen y el saldo de rivales (requieren
-    el historial completo de movimientos, más caro de pedir)."""
+    Cada entrada es (texto, teclado_o_None). Las cláusulas (`clauses_report`) y ahora también
+    el mercado/inversión (`buy_sections`, 2026-09-22) van uno por jugador, cada uno con su
+    propio botón — antes "Mercado para tu once" + "Inversión" iban en un solo mensaje con
+    todos los botones amontonados al final, y no se veía cuál era de quién. Omite lo que no
+    tenga nada relevante que decir, para no mandar un tocho. `store` es opcional: sin él no se
+    puede saber qué pagaste por tus jugadores, así que se omite la sección de corta-pérdidas.
+    `rival_cash` opcional: sin él se omiten el riesgo de que te clausulen y el saldo de
+    rivales (requieren el historial completo de movimientos, más caro de pedir)."""
     stamp = analysis.to_madrid(world.fetched_at).strftime("%d/%m/%Y %H:%M")
     sections: list[tuple[str, dict | None]] = [
         (f"{b('⚽ Informe')}\n{i(stamp)}\n\n{lineup_report(world, news)}", None)
     ]
 
-    buy_parts = [p for p in (market_report(world, rival_cash=rival_cash), investment_report(world, rival_cash=rival_cash)) if p]
-    if buy_parts:
-        sections.append(("\n\n".join(buy_parts), buy_keyboard(world, rival_cash)))
+    sections += buy_sections(world, rival_cash=rival_cash)
 
     mine_parts = [trends_report(world)]
     sell_buttons = None

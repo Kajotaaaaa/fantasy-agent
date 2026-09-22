@@ -492,9 +492,16 @@ botón "b:<id>" → Worker cambia SU fila a [✅ Confirmar · <etiqueta> "B:<id>
   propio teclado (el Worker lo lee de `callback_query.message.reply_markup`), sin base de datos:
   la etiqueta original se recupera de "✅ Confirmar · <etiqueta>" al cancelar. Si al confirmar
   el botón ya no está en el teclado (doble pulsación), no se dispara nada por segunda vez.
-- `report_sections` ya no junta compra y venta en un mensaje: "Mercado + Inversión" (botones de
-  puja), "Tus jugadores" (tendencias + corta-pérdidas + candidatos, botones de venta) y "En
-  venta ahora" (botones de retirar, solo si tienes a alguien en venta).
+- `report_sections` ya no junta compra y venta en un mensaje: "Tus jugadores" (tendencias +
+  corta-pérdidas + candidatos, botones de venta) y "En venta ahora" (botones de retirar, solo
+  si tienes a alguien en venta) van aparte. "Mercado para tu once" e "Inversión"
+  (`service.buy_sections`, 2026-09-22) van UN MENSAJE POR JUGADOR, cada uno con su propio
+  botón de puja debajo — antes iban todos juntos en un mensaje con todos los botones
+  amontonados al final, y con varios candidatos a la vez no se veía cuál era de quién
+  (petición real del usuario). El título de cada lista se pega a la ficha del primer jugador
+  para no mandar un mensaje suelto solo con la cabecera. `market_report`/`investment_report`
+  (texto unido, un solo teclado) se mantienen para el comando `market` y para pruebas, pero el
+  informe diario usa `buy_sections`.
 - Pendientes de verificar en real: pujar y vender por botón usan los mismos endpoints ya
   verificados con `bid`/`sell`/`withdraw`, pero el circuito completo por botón solo se ha
   probado con `c:` y un id inexistente. `o`/`r` (aceptar/rechazar oferta) son NUEVOS: el

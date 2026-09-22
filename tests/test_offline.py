@@ -397,6 +397,23 @@ class Tests(unittest.TestCase):
         flat = analysis.bid_plan(10_000_000, 10_000_000, analysis.Trend(0, 0, 0), 7.5, 0.0, False, existing_bids=1)
         self.assertEqual(flat.cushion, 10_200_000)  # sin margen que lo cubra, sí sale
 
+    def test_buy_sections_one_message_per_player(self):
+        # Pedido del usuario (2026-09-22): con varios candidatos, un solo mensaje con todos los
+        # botones al final no dejaba ver cuál era de quién. Ahora cada jugador es su propio
+        # (texto, teclado), con el título de la lista pegado al primero.
+        world = service.build_world(FakeAPI(), self.s)
+        sections = service.buy_sections(world)
+        self.assertGreaterEqual(len(sections), 1)
+        first_text, first_kb = sections[0]
+        self.assertIn("Mercado para tu once", first_text)
+        self.assertIn("Chollo", first_text)
+        self.assertTrue(all(row[0]["callback_data"].startswith("b:L100:") for row in first_kb["inline_keyboard"]))
+        # Cada sección lleva su propio teclado (o ninguno), nunca el de otro jugador.
+        for text, kb in sections:
+            if kb:
+                ids = {row[0]["callback_data"].split(":")[1] for row in kb["inline_keyboard"]}
+                self.assertEqual(len(ids), 1)
+
     def test_fixture_factor_rival_and_home_away(self):
         # Petición del usuario (2026-09-22): dos jugadores con la misma media no deberían
         # puntuar igual si uno juega contra una defensa floja y otro contra una fuerte.
