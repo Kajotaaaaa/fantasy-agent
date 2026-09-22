@@ -157,6 +157,35 @@ estado real vive en la caché de Actions, no en el SQLite local; no ejecutar `wa
   avisa a las 2 h de silencio y a las 24 h: cubre lo que un tick que ni arranca no puede
   contar (cron de GitHub desactivado por inactividad, token de GitHub roto...).
 
+## Once recomendado: dificultad del rival y local/visitante (2026-09-22)
+Petición del usuario ("dos jugadores con la misma media no puntúan igual si uno juega contra
+el líder y otro contra el colista, y ni hablar de que jugar en casa es distinto"): antes
+`lineup.expected_points` solo hacía `avg_points × prob. de jugar`, ignorando el rival de la
+jornada y si se juega en casa o fuera.
+- `service.team_strength` (envoltorio de `models.team_strength`) calcula, por cada equipo REAL
+  de LaLiga (no de tu liga privada), la media de puntos por partido de su portero+defensas
+  (cuánto encaja: más bajo = defensa floja) y de sus medios+delanteros (cuánto ataca), a partir
+  de `api.players()` — mismo endpoint que ya pide `league_top_ids`, en caché de la ejecución
+  (`FantasyAPI._cache`), así que no cuesta ninguna llamada extra. Se guarda en
+  `World.team_def_ppm`/`team_att_ppm` (poblado en `build_world`).
+- `analysis.fixture_factor(position_id, home, rival_def_ppm, rival_att_ppm, baseline_def,
+  baseline_att)`: para un jugador de ataque (medio/delantero) mira la defensa+portero del
+  rival; para portero/defensa mira el ataque rival (al revés: rival flojo en ataque = más
+  opciones de portería a cero). Se compara contra la media de TODA la liga en ese puesto y se
+  capa a `RIVAL_FACTOR_RANGE` (±15%) para que un solo dato suelto no dispare la proyección.
+  Aparte, `HOME_ADVANTAGE` (±6%) por jugar en casa o fuera, símil al "home advantage" real del
+  fútbol — se aplica siempre que se conoce el rival, independiente del factor de rival.
+- `service.lineup_report` es el único sitio que usa el factor completo (calcula
+  `baseline_def`/`baseline_att` como la media de `world.team_def_ppm`/`team_att_ppm`, y por
+  cada jugador mira `world.fixtures.get(player.team_id)` para el rival y si es local). Sin
+  fixture conocido (jornada sin calendario todavía), el factor queda en 1.0 — nunca se inventa
+  casa/fuera sin dato. Otros usos de `lineup.Candidate`/`expected_points` (comprobar si la
+  plantilla alinea un once legal, `offers_watch_report`) dejan `fixture_factor` en su valor por
+  defecto (1.0): ahí no importa la precisión de puntos, solo si hay cuerpos disponibles.
+- Pendiente, aparcado: riesgo de sanción por acumulación de amarillas — no hay ninguna fuente
+  de datos ya usada (ni la API del juego ni el scraping de FutbolFantasy) que exponga tarjetas
+  acumuladas; habría que buscar y verificar una fuente nueva antes de tocar esto.
+
 ## Techo de puja (fichajes para el once, no flipeo)
 `analysis.bid_ceiling` + `service.position_ppm_benchmark`/`bid_ceiling_report` (comando
 `ceiling <player_id>`): las pujas son ciegas por diseño del juego (confirmado en el FAQ

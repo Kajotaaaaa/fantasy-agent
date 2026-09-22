@@ -397,6 +397,26 @@ class Tests(unittest.TestCase):
         flat = analysis.bid_plan(10_000_000, 10_000_000, analysis.Trend(0, 0, 0), 7.5, 0.0, False, existing_bids=1)
         self.assertEqual(flat.cushion, 10_200_000)  # sin margen que lo cubra, sí sale
 
+    def test_fixture_factor_rival_and_home_away(self):
+        # Petición del usuario (2026-09-22): dos jugadores con la misma media no deberían
+        # puntuar igual si uno juega contra una defensa floja y otro contra una fuerte.
+        baseline_def, baseline_att = 4.0, 4.0
+        # Delantero (posición 4) contra una defensa floja (2.0, la mitad de la media de liga):
+        # sube el factor, tope +15%, y encima juega en casa: se suman los dos.
+        weak_defense = analysis.fixture_factor(4, True, 2.0, None, baseline_def, baseline_att)
+        self.assertEqual(weak_defense, round(1.15 * 1.06, 3))
+        # El mismo delantero contra una defensa fuerte (8.0, el doble de la media) y fuera de
+        # casa: baja por los dos lados.
+        strong_defense = analysis.fixture_factor(4, False, 8.0, None, baseline_def, baseline_att)
+        self.assertEqual(strong_defense, round(0.85 * 0.94, 3))
+        self.assertLess(strong_defense, weak_defense)
+        # Un defensa (posición 2) mira el ATAQUE rival, no su defensa.
+        vs_weak_attack = analysis.fixture_factor(2, True, None, 2.0, baseline_def, baseline_att)
+        self.assertEqual(vs_weak_attack, round(1.15 * 1.06, 3))
+        # Sin dato de rival, solo cuenta casa/fuera.
+        no_data = analysis.fixture_factor(4, True, None, None, baseline_def, baseline_att)
+        self.assertEqual(no_data, 1.06)
+
     def test_market_verdict_recovering_scores_like_sustained_rally(self):
         # Bug real (2026-09-22): un jugador que venía cayendo pero ya recupera (trend.recovering)
         # puntuaba igual que uno en caida libre sin más — se quedaba sin el punto extra que sí

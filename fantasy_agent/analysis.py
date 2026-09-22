@@ -869,6 +869,37 @@ def clause_theft_risk(
     return out
 
 
+# ---------- once recomendado: dificultad del rival + local/visitante --------
+HOME_ADVANTAGE = 0.06  # ventaja/desventaja de jugar en casa o fuera, símil al "home advantage" real
+RIVAL_FACTOR_RANGE = (0.85, 1.15)  # tope al factor de rival: un dato suelto no debe disparar la proyección
+
+
+def fixture_factor(
+    position_id: int, home: bool, rival_def_ppm: float | None, rival_att_ppm: float | None,
+    baseline_def: float, baseline_att: float,
+) -> float:
+    """Multiplicador sobre los puntos esperados de un jugador por el rival de esta jornada y
+    por jugar en casa o fuera (2026-09-22, petición del usuario: "dos jugadores con la misma
+    media no puntúan igual si uno juega contra el líder y otro contra el colista"). Para un
+    jugador de ataque (medio/delantero) importa la defensa+portero del rival (`rival_def_ppm`,
+    media de puntos por partido de esos puestos en su equipo real — más bajo es una defensa
+    floja); para portero/defensa importa el ataque del rival (`rival_att_ppm`) al revés: un
+    ataque rival flojo sube las opciones de portería a cero. Se compara contra la media de
+    TODA la liga en ese mismo puesto (`baseline_def`/`baseline_att`, `service.team_strength`) y
+    se capa a `RIVAL_FACTOR_RANGE` para no disparar la proyección por un solo dato suelto. Sin
+    dato de rival (jornada sin calendario todavía) el factor de rival no cuenta, solo el de
+    casa/fuera."""
+    attacker = position_id in (3, 4)
+    rival_strength = rival_def_ppm if attacker else rival_att_ppm
+    baseline = baseline_def if attacker else baseline_att
+    factor = 1.0
+    if rival_strength and baseline:
+        lo, hi = RIVAL_FACTOR_RANGE
+        factor *= max(lo, min(hi, baseline / rival_strength))
+    factor *= (1 + HOME_ADVANTAGE) if home else (1 - HOME_ADVANTAGE)
+    return round(factor, 3)
+
+
 # ---------- flipeo: comprar en subida, vender rápido con beneficio o mínima pérdida ---------
 def squad_can_field_eleven(slots: list[SquadSlot], exclude_player_id: str | None = None) -> bool:
     """¿La plantilla (quitando `exclude_player_id`, si se da) tiene cuerpos suficientes para

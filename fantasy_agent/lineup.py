@@ -17,12 +17,16 @@ class Candidate:
     note: str = ""
 
 
-def expected_points(player: Player, start_prob: float) -> float:
+def expected_points(player: Player, start_prob: float, fixture_factor: float = 1.0) -> float:
+    """`fixture_factor` (por defecto neutro): multiplicador de `analysis.fixture_factor` por
+    la dificultad del rival de esta jornada y por jugar en casa o fuera. Los llamadores que no
+    necesitan esa precisión (comprobar si la plantilla alinea un once legal, listas de venta)
+    lo dejan en 1.0 sin más."""
     if player.status.lower() in ("injured", "suspended", "lesionado", "sancionado"):
         return 0.0
     base = player.avg_points if player.avg_points > 0 else 2.0
     doubt = 0.55 if player.status.lower() in ("doubtful", "duda") else 1.0
-    return round(base * start_prob * doubt, 2)
+    return round(base * start_prob * doubt * fixture_factor, 2)
 
 
 def best_eleven(cands: list[Candidate]) -> tuple[tuple[int, int, int] | None, list[Candidate], float]:

@@ -28,6 +28,8 @@ class World:
     league_top_ids: set[str] = field(default_factory=set)
     clause_freeze: tuple[datetime, datetime] | None = None
     next_jornada: datetime | None = None
+    team_def_ppm: dict[str, float] = field(default_factory=dict)  # cuánto encaja cada equipo real
+    team_att_ppm: dict[str, float] = field(default_factory=dict)  # cuánto ataca cada equipo real
     fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -97,6 +99,15 @@ def league_top_ids(api: FantasyAPI, top_n: int = LEAGUE_TOP_N) -> set[str]:
     return out
 
 
+def team_strength(api: FantasyAPI) -> tuple[dict[str, float], dict[str, float]]:
+    """Envoltorio de `models.team_strength` con manejo de fallo: si `api.players()` falla, el
+    factor de dificultad del rival simplemente no se aplica (queda en 1.0), no rompe el once."""
+    try:
+        return models.team_strength(api.players())
+    except Exception:
+        return {}, {}
+
+
 def clause_freeze_window(api: FantasyAPI) -> tuple[datetime, datetime] | None:
     """La liga bloquea TODAS las cláusulas desde 24h antes del primer partido de la jornada
     hasta que arranca ese partido."""
@@ -150,11 +161,13 @@ def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World
         if item.player.team == "?" and item.player.team_id in team_names:
             item.player.team = team_names[item.player.team_id]
     fixtures = next_fixtures(api, {sl.player.team_id for sl in my_slots})
+    team_def_ppm, team_att_ppm = team_strength(api)
     world = World(
         league_id, my_team_id, my_cash, standing, my_slots, rival_slots, market,
         team_names=team_names, fixtures=fixtures,
         league_top_ids=league_top_ids(api), clause_freeze=clause_freeze_window(api),
         next_jornada=next_jornada_start(api),
+        team_def_ppm=team_def_ppm, team_att_ppm=team_att_ppm,
     )
 
     if with_trends:
@@ -1085,6 +1098,8 @@ def _rival_name(world: World, team_id: str) -> str:
 
 
 def lineup_report(world: World, news: dict[str, dict] | None) -> str:
+    baseline_def = sum(world.team_def_ppm.values()) / len(world.team_def_ppm) if world.team_def_ppm else 0.0
+    baseline_att = sum(world.team_att_ppm.values()) / len(world.team_att_ppm) if world.team_att_ppm else 0.0
     cands = []
     for sl in world.my_slots:
         p = sl.player
@@ -1096,7 +1111,15 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
             p = replace(p, status="injured")
         elif info.get("status") == "duda" and p.available:
             p = replace(p, status="doubtful")
-        cands.append(lineup.Candidate(p, prob, lineup.expected_points(p, prob), info.get("note", "")))
+        fx = world.fixtures.get(p.team_id)
+        factor = (
+            analysis.fixture_factor(
+                p.position_id, fx.home, world.team_def_ppm.get(fx.rival_id), world.team_att_ppm.get(fx.rival_id),
+                baseline_def, baseline_att,
+            )
+            if fx else 1.0
+        )
+        cands.append(lineup.Candidate(p, prob, lineup.expected_points(p, prob, factor), info.get("note", "")))
 
     formation, eleven, total = lineup.best_eleven(cands)
     if not eleven:

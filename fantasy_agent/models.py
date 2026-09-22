@@ -92,6 +92,26 @@ def parse_player(d: dict) -> Player:
     )
 
 
+def team_strength(payload: Any) -> tuple[dict[str, float], dict[str, float]]:
+    """Media de puntos por partido de portero+defensas (cuánto encaja el equipo real: más bajo
+    = defensa floja) y de medios+delanteros (cuánto ataca), por equipo real de LaLiga, a partir
+    del listado público de jugadores — para el factor de dificultad del rival de la jornada
+    (`analysis.fixture_factor`)."""
+    by_def: dict[str, list[float]] = {}
+    by_att: dict[str, list[float]] = {}
+    for item in as_list(payload, "players", "elements"):
+        team_id = str(pick(item, "team.id", "teamId", default=""))
+        pos = to_int(pick(item, "positionId", "position.id"))
+        avg = float(pick(item, "averagePoints", "avgPoints", default=0) or 0)
+        if not team_id or not avg or pos not in (1, 2, 3, 4):
+            continue
+        (by_def if pos in (1, 2) else by_att).setdefault(team_id, []).append(avg)
+    return (
+        {tid: sum(v) / len(v) for tid, v in by_def.items()},
+        {tid: sum(v) / len(v) for tid, v in by_att.items()},
+    )
+
+
 def points_by_position(payload: Any) -> dict[int, list[tuple[str, int]]]:
     """id y puntos totales de cada jugador, agrupados por posición (para detectar TOP de liga)."""
     out: dict[int, list[tuple[str, int]]] = {}
