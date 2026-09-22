@@ -129,14 +129,20 @@ estado real vive en la caché de Actions, no en el SQLite local; no ejecutar `wa
   El importe se parsea de `money` (antes ya cubierto por `models.pick`); el `market_id` que
   piden `accept_offer`/`reject_offer` NO viaja en la oferta, se resuelve aparte con
   `service._my_listings` por `player_id` (igual que `_act_sell`/`_act_withdraw`). `flip.watch_offers`
-  (en cada tick, con o sin FLIP_MODE) manda por Telegram cada oferta nueva con su JSON crudo,
-  lo que diría `analysis.flip_decision`, y botones "✅ Aceptar"/"❌ Rechazar" con la confirmación
-  de dos pasos del Worker (verbos `o` "<jugador>:<oferta>:<importe>" y `r` "<jugador>:<oferta>"
-  en `PAYLOADS`, `_act_accept_offer`/`_act_reject_offer` en `cli.py`). Nunca autoejecuta: el
-  bot solo arma el botón, la decisión (aceptar/esperar/rechazar) la toma el usuario. Antes de
-  aceptar, `_act_accept_offer` comprueba que el jugador sigue en venta (la oferta pudo
-  resolverse sola entre el aviso y la pulsación) y `squad_can_field_eleven` (no quedarse corto
-  de cuerpos para la jornada).
+  (en cada tick, con o sin FLIP_MODE) manda por Telegram cada oferta nueva con el importe, lo
+  que pagaste, el beneficio neto (o un aviso explícito si no se conoce el precio de compra —
+  jugador de antes de que el bot empezara a seguirlo) y botones "✅ Aceptar"/"❌ Rechazar" con la
+  confirmación de dos pasos del Worker (verbos `o` "<jugador>:<oferta>:<importe>" y `r`
+  "<jugador>:<oferta>" en `PAYLOADS`, `_act_accept_offer`/`_act_reject_offer` en `cli.py`). El
+  JSON crudo ya no se manda (formato verificado, ver arriba); si hace falta, queda en el `print`
+  del log de `tick`. Nunca autoejecuta: el bot solo arma el botón, la decisión
+  (aceptar/esperar/rechazar) la toma el usuario. Antes de aceptar, `_act_accept_offer` comprueba
+  que el jugador sigue en venta (la oferta pudo resolverse sola entre el aviso y la pulsación) y,
+  SOLO si faltan ≤48h para `world.next_jornada` (`ELEVEN_CHECK_WINDOW`), que la plantilla sin él
+  sigue pudiendo alinear un once legal (`squad_can_field_eleven`): con más margen que eso, el
+  usuario todavía tiene tiempo de fichar un reemplazo antes de que cuente, así que no bloquea la
+  venta (lección real, 2026-09-22: bloqueaba la venta de Abel Bretones aunque quedaban días para
+  reponer plantilla).
 - **Libro de resultados y freno.** Cuando un flip sale de tu plantilla (`_list_held`), se anota
   en `flip_result:*` lo que costó y lo que se cobró (venta a LaLiga tipo 33 o cláusula cobrada
   tipo 1 del historial) y se manda "Flip cerrado" con el resultado. `breaker_reason` PAUSA LA
@@ -170,11 +176,13 @@ prisa. Pasados 3 días sin beneficio, priorizar liquidez: aceptar en cuanto la o
 al menos lo pagado; evitar vender por debajo salvo que ya no quede alternativa (fecha límite
 antes de la jornada, saldo necesario, etc. — no está codificado como "vender sí o sí" incluso
 en pérdida; esa decisión final la toma el usuario cuando llegue el caso).
-`analysis.squad_can_field_eleven`: antes de proponer aceptar una venta, comprobar que la
-plantilla sin ese jugador sigue pudiendo alinear un once legal (cuerpos disponibles por
-posición, no calidad) — la regla de "nunca quedarse corto para la jornada" que pidió el
-usuario. `buy_date:<id>` en `kv` (junto a `buy_price:<id>`, ambos puestos/borrados a la vez
-por `my_transactions`) da los días transcurridos para esta lógica.
+`analysis.squad_can_field_eleven`: antes de aceptar una venta, comprobar que la plantilla sin
+ese jugador sigue pudiendo alinear un once legal (cuerpos disponibles por posición, no
+calidad) — la regla de "nunca quedarse corto para la jornada" que pidió el usuario, pero SOLO
+se aplica dentro de las 48h antes de `world.next_jornada` (`cli.ELEVEN_CHECK_WINDOW`): con más
+margen todavía da tiempo a fichar un reemplazo antes de que cuente, así que no bloquea la
+venta. `buy_date:<id>` en `kv` (junto a `buy_price:<id>`, ambos puestos/borrados a la vez por
+`my_transactions`) da los días transcurridos para esta lógica.
 Conectado con `accept`/`reject` reales (ver más arriba, sección "Aceptar/rechazar ofertas").
 Autonomía acordada: SIEMPRE confirmación del usuario por operación, nunca autoejecutar
 pujas/ventas de este flujo sin preguntar primero — los botones de oferta llevan la
@@ -411,7 +419,7 @@ Elegido por el usuario: webhook (no sondeo). Código `<verbo>:<id>`:
 | `s:<player_id>` | 📤 Vender <nombre> <valor> | "Candidatos a vender" (tendencia a la baja) salvo los que ya están en venta | pone a la venta a valor de mercado |
 | `u:<anuncio>:<puja>:<cantidad>` | ✏️ Cambiar puja (solo si ya tienes una pendiente ahí) | "📌 Tus pujas pendientes" (`my_bids_report`, comando `bids`, también en el informe diario) y las tarjetas de compra | `api.update_bid` (PUT, cuerpo sin verificar); comprueba que la puja sigue pendiente y los mismos topes que `b` |
 | `w:<player_id>` | ↩️ Retirar <nombre> | "En venta ahora" (`my_listings_report`, comando `listings`) | retira el anuncio |
-| `o:<player_id>:<offer_id>:<importe>` | ✅ Aceptar <importe> | "📨 Oferta recibida" (`flip.watch_offers`, cada tick) | comprueba que sigue en venta y que la plantilla sin él alinea un once legal (`squad_can_field_eleven`), luego `api.accept_offer` con el `market_id` resuelto por `service._my_listings` |
+| `o:<player_id>:<offer_id>:<importe>` | ✅ Aceptar <importe> | "📨 Oferta recibida" (`flip.watch_offers`, cada tick) | comprueba que sigue en venta y (solo si faltan ≤48h para la jornada) que la plantilla sin él alinea un once legal (`squad_can_field_eleven`), luego `api.accept_offer` con el `market_id` resuelto por `service._my_listings` |
 | `r:<player_id>:<offer_id>` | ❌ Rechazar | "📨 Oferta recibida" (`flip.watch_offers`, cada tick) | comprueba que sigue en venta y `api.reject_offer`; el jugador sigue a la venta |
 
 Los avisos "se libera en Xh" no llevan botón (aún no se puede pagar).

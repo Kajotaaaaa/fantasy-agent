@@ -293,12 +293,16 @@ def _act_update_bid(api, s, target: str) -> str:
     )
 
 
+ELEVEN_CHECK_WINDOW = timedelta(hours=48)  # por debajo de esto ya no da tiempo a fichar reemplazo
+
+
 def _act_accept_offer(api, s, target: str) -> str:
     """Acepta una oferta ("<jugador>:<oferta>:<importe>"). Antes de llamar a la API comprueba
     que el jugador sigue en venta (la oferta pudo resolverse sola, expirar, o ya haberse
-    aceptado/rechazado desde otro sitio entre el aviso y la pulsación) y que la plantilla sin
-    él sigue pudiendo alinear un once legal (regla del usuario: nunca quedarse corto de
-    cuerpos para la jornada)."""
+    aceptado/rechazado desde otro sitio entre el aviso y la pulsación). Solo si faltan
+    `ELEVEN_CHECK_WINDOW` o menos para la próxima jornada comprueba además que la plantilla sin
+    él sigue pudiendo alinear un once legal (regla del usuario: con más margen todavía da
+    tiempo a fichar un reemplazo, así que no bloquea la venta)."""
     player_id, offer_id, raw_amount = (target.split(":") + ["", "", ""])[:3]
     amount = int(raw_amount)
     world = service.build_world(api, s, with_trends=False)
@@ -308,8 +312,12 @@ def _act_accept_offer(api, s, target: str) -> str:
     item = next((x for x in service._my_listings(world) if x.player.id == player_id), None)
     if not item:
         raise RuntimeError("Ese jugador ya no está en venta (puede que la oferta ya se resolviera).")
-    if not analysis.squad_can_field_eleven(world.my_slots, exclude_player_id=player_id):
-        raise RuntimeError("Vender a este jugador te deja sin cuerpos para alinear un once legal: no lo acepto.")
+    close_to_jornada = world.next_jornada and world.next_jornada - datetime.now(timezone.utc) <= ELEVEN_CHECK_WINDOW
+    if close_to_jornada and not analysis.squad_can_field_eleven(world.my_slots, exclude_player_id=player_id):
+        raise RuntimeError(
+            "Vender a este jugador te deja sin cuerpos para alinear un once legal y la jornada empieza en "
+            "menos de 48h (sin tiempo para fichar reemplazo): no lo acepto.",
+        )
     api.accept_offer(world.league_id, item.listing_id, offer_id, amount)
     return f"✅ {service.b('Oferta aceptada')}\n{service.b(slot.player.name)} vendido por {service.m(amount)}"
 
