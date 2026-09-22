@@ -216,6 +216,14 @@ jornada y si se juega en casa o fuera.
   los 20 equipos reales con nombre, este hueco no tiene arreglo limpio por ahora: hoy afecta a
   2 de los 20 clubes (verificado 2026-09-22, ids `18` y `2`, ninguno de sus jugadores está en
   ninguna plantilla de esta liga). Revisar si aparece un endpoint nuevo con `probe`.
+  **Actualización 2026-09-22:** el usuario identificó estos dos ids a mano cruzando el
+  calendario de la jornada contra los rivales reales (el informe mostraba "equipo #18 🏠" para
+  un jugador cuyo equipo visita al Racing el 11/10, y "equipo #2" para uno que visita al Alavés
+  el 10/10) → id `18` = Valencia CF, id `2` = Atlético de Madrid. Añadido como
+  `MANUAL_TEAM_NAMES` en `service.build_world` (mapa de respaldo fijo, se sobrescribe si algún
+  día un jugador de esos clubes entra en una plantilla de la liga). Si en el futuro aparecen
+  más ids sin nombre, el mismo truco (cruzar `world.fixtures`/calendario contra el rival real
+  que el usuario reconoce) sirve para identificarlos.
 - **Identificador visual por equipo (2026-09-22, petición del usuario).** No se pueden poner
   escudos reales: Telegram (`sendMessage`) no admite imágenes dentro del texto de un mensaje,
   solo `sendPhoto` aparte, que no tiene sentido para un informe con varios jugadores/equipos en

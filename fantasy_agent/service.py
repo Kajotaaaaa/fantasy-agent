@@ -160,8 +160,15 @@ def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World
     # plantilla de esta liga: `api.players()` (el listado público) NO trae el nombre del
     # equipo, solo `teamId` (comprobado 2026-09-22 contra la cuenta real) — y el mercado
     # tampoco. Si un club real no tiene NINGÚN jugador en ninguna plantilla de la liga, no hay
-    # forma de saber su nombre y el rival de la jornada sale como "equipo #<id>".
-    team_names = {sl.player.team_id: sl.player.team for sl in (*my_slots, *rival_slots) if sl.player.team != "?"}
+    # forma de saber su nombre por la API y hace falta este mapa manual de respaldo. Estos dos
+    # ids se identificaron el 2026-09-22 cruzando el calendario contra los rivales reales que el
+    # usuario confirmó a mano (equipo #18 visita al Racing el 11/10 -> Valencia CF; equipo #2
+    # visita al Alavés el 10/10 -> Atlético de Madrid).
+    MANUAL_TEAM_NAMES = {"18": "Valencia CF", "2": "Atlético de Madrid"}
+    team_names = dict(MANUAL_TEAM_NAMES)
+    team_names.update(
+        {sl.player.team_id: sl.player.team for sl in (*my_slots, *rival_slots) if sl.player.team != "?"}
+    )
     for item in market:
         if item.player.team == "?" and item.player.team_id in team_names:
             item.player.team = team_names[item.player.team_id]
