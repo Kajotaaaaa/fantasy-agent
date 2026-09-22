@@ -413,11 +413,15 @@ ganancia real es menor que comparar contra mercado; si es una ganga (ratio < 1) 
 Antes de este fix se comparaba contra el valor de mercado, lo que infla la rentabilidad
 aparente de cualquier cláusula pagada por encima de mercado.
 
-## Tendencias: 7 días puede ser una racha ya muerta
+## Tendencias: 7 días puede ser una racha ya muerta (o una que aún no se nota)
 `analysis.Trend` compara el ritmo de 7 días contra el de 3: `cooling` = subió a 7d pero el
 corto plazo ya no lo confirma (racha vieja, no pagues de más por ella); `recovering` = al
-revés, cayó a 7d pero ya remonta. `project_value` (usa el ritmo de 3 días si detecta
-`cooling`/`recovering` en vez del de 7, que ya no describe el momento actual) y los veredictos
+revés, cayó a 7d pero ya remonta. `project_value` usa el ritmo de 3 días si detecta
+`cooling`/`recovering` (el de 7 ya no describe el momento actual); si no, usa el MAYOR entre
+el de 7 y el de 3 (2026-09-22, petición del usuario: una subida recién empezada por una buena
+última actuación — "es lo último que hizo, es muy probable que siga subiendo hasta la próxima
+jornada" — todavía no se nota en el de 7 días, y quedarse solo con ese infravalora justo a los
+que acaban de despegar; `cooling` sigue protegiendo de lo contrario). Los veredictos
 (`clause_verdict`, `market_verdict`) usan esto en vez de mirar `d7` solo — evita decir "en
 racha" de un valor que ya se frenó. El campo `d7` sigue calculándose y se usa como umbral
 interno (`cooling`/`recovering`, `sell_high_candidates`, el filtro de especulativas), pero ya

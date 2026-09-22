@@ -388,8 +388,8 @@ class Tests(unittest.TestCase):
         rising = analysis.Trend(2.0, 6.0, 12.0)
         plan_3d = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.5, False)
         plan_14d = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.5, False, days=14)
-        self.assertEqual(plan_14d.expected, 12_686_661)  # ritmo de 7 días (más estable), no el de 3
-        self.assertEqual(plan_14d.margin, 11_344_000)
+        self.assertEqual(plan_14d.expected, 13_194_788)  # ritmo MAYOR entre 7 días (1.71%) y 3 días (2.0%)
+        self.assertEqual(plan_14d.margin, 11_598_000)
         self.assertGreater(plan_14d.margin, plan_3d.margin)
         # Igual que a 3 días: sin subida no hay margen que justificar, tampoco a 14.
         flat = analysis.bid_plan(10_000_000, 10_000_000, analysis.Trend(0, 0, 0), 7.5, 0, False, days=14)

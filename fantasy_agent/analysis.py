@@ -329,14 +329,18 @@ def score_investment(item: MarketItem, trend: Trend) -> float | None:
 def project_value(current: int, trend: Trend, days: int = 14) -> int:
     """Cuánto podría valer dentro de `days` días si sigue el ritmo reciente.
     Por defecto 14 días: es lo que tarda en liberarse la cláusula tras comprar a alguien,
-    así que ese es tu horizonte real para poder revenderlo. Usa el ritmo a 7 días (más
-    estable que el de 3) para no disparar la proyección por un pico de un par de días —
-    salvo que la tendencia ya haya cambiado de sentido (`cooling`/`recovering`), porque
-    entonces el ritmo de 7 días describe una racha que ya terminó y el de 3 es lo vigente."""
+    así que ese es tu horizonte real para poder revenderlo. Si la tendencia ya cambió de
+    sentido (`cooling`/`recovering`) el ritmo de 7 días describe una racha que ya terminó, así
+    que se usa el de 3 (lo vigente). Si no, el ritmo es el MAYOR entre el de 7 días (más
+    estable) y el de 3 (más reciente) — no solo el de 7 días: una subida recién empezada por
+    una buena última actuación (petición del usuario, 2026-09-22: "es lo último que hizo, es
+    muy probable que no pare de subir hasta la próxima jornada") todavía no se refleja en el
+    de 7 días, y descartarla infravalora justo a los que acaban de despegar. `cooling` sigue
+    protegiendo de lo contrario (una racha que se frena no se proyecta con su ritmo viejo)."""
     if trend.cooling or trend.recovering:
         daily_rate = trend.d3 / 3
     else:
-        daily_rate = trend.d7 / 7 if trend.d7 else trend.d3 / 3
+        daily_rate = max(trend.d7 / 7, trend.d3 / 3)
     return round(current * (1 + daily_rate / 100) ** days)
 
 
