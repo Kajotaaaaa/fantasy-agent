@@ -205,6 +205,12 @@ jornada y si se juega en casa o fuera.
   casa/fuera sin dato. Otros usos de `lineup.Candidate`/`expected_points` (comprobar si la
   plantilla alinea un once legal, `offers_watch_report`) dejan `fixture_factor` en su valor por
   defecto (1.0): ahí no importa la precisión de puntos, solo si hay cuerpos disponibles.
+- **Bug real relacionado (2026-09-22): "equipo #&lt;id&gt;" en vez del nombre.** `World.team_names`
+  se construía SOLO a partir de las plantillas (`my_slots`/`rival_slots`): si el rival de la
+  jornada de uno de tus jugadores era un club real sin ningún jugador en tu liga privada, no
+  había forma de saber su nombre y `_rival_name` caía al `f"equipo #{id}"`. Arreglado con
+  `models.all_team_names(api.players())` (mismo endpoint, ya en caché): cubre los 20 equipos
+  reales de LaLiga siempre, y las plantillas solo pisan el nombre si ya se conocía por ahí.
 - Pendiente, aparcado: riesgo de sanción por acumulación de amarillas — no hay ninguna fuente
   de datos ya usada (ni la API del juego ni el scraping de FutbolFantasy) que exponga tarjetas
   acumuladas; habría que buscar y verificar una fuente nueva antes de tocar esto.

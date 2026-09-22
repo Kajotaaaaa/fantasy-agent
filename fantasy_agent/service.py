@@ -156,7 +156,13 @@ def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World
         (my_slots if row.team_id == my_team_id else rival_slots).extend(slots)
 
     market = models.parse_market(api.market(league_id))
-    team_names = {sl.player.team_id: sl.player.team for sl in (*my_slots, *rival_slots) if sl.player.team != "?"}
+    # Base: los 20 equipos reales de LaLiga (cubre también el rival de la jornada de un club sin
+    # ningún jugador en esta liga privada); las plantillas pueden pisar el nombre si difiere.
+    try:
+        team_names = models.all_team_names(api.players())
+    except Exception:
+        team_names = {}
+    team_names.update({sl.player.team_id: sl.player.team for sl in (*my_slots, *rival_slots) if sl.player.team != "?"})
     for item in market:
         if item.player.team == "?" and item.player.team_id in team_names:
             item.player.team = team_names[item.player.team_id]

@@ -516,6 +516,16 @@ class Tests(unittest.TestCase):
         self.assertIsNone(flip.flip_amount(listing(7, 10_000_000), analysis.Trend(0.18, 4.4, 23.0)))
         self.assertIsNone(flip.flip_amount(listing(6, 11_000_000), rising))  # pide 10% sobre su valor
 
+    def test_all_team_names_covers_clubs_without_owned_players(self):
+        # Bug real (2026-09-22): el rival de la jornada de un club SIN ningun jugador en esta
+        # liga privada salia como "equipo #<id>" porque team_names solo se construia a partir
+        # de las plantillas. all_team_names cubre los 20 equipos reales via el listado publico.
+        payload = [
+            {"id": "1", "positionId": 3, "team": {"id": "t9", "name": "Rayo Vallecano"}},
+            {"id": "2", "positionId": 4, "team": {"id": "t9", "name": "Rayo Vallecano"}},
+        ]
+        self.assertEqual(models.all_team_names(payload), {"t9": "Rayo Vallecano"})
+
     def test_initial_squad_and_common_value_estimate(self):
         def ev(n, type_id, u1, u2, pid, amount, day):
             return models.Activity(str(n), type_id, u1, u2, pid, amount, NOW - timedelta(days=30 - day))
