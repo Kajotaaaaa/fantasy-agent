@@ -355,14 +355,22 @@ def watch_offers(api: FantasyAPI, world: service.World, store, s: Settings) -> l
             offer_id = str(models.pick(offer, "id", "offerId", default="") or "")
             lines = [f"📨 {b('Oferta recibida')} por {b(slot.player.name)}"]
             if amount:
-                lines.append(f"Importe: {b(service.m(amount))}")
+                lines.append(f"Te ofrecen: {b(service.m(amount))}")
                 buy = int(store.get(f"buy_price:{slot.player.id}") or 0)
                 if buy:
+                    gain = amount - buy
+                    pct = gain / buy * 100
+                    lines.append(f"Lo pagaste: {service.m(buy)} · {b('Beneficio neto: ' + service.m(gain))} ({pct:+.0f}%)")
                     held_at = held.get(slot.player.id, {}).get("bought_at")
                     days = (datetime.now(timezone.utc) - datetime.fromisoformat(held_at)).days if held_at else 0
                     decision, why = analysis.flip_decision(buy, amount, days, None)
                     verb = "aceptar" if decision == "accept" else "esperar"
-                    lines.append(f"Mi regla: {b(verb)} — {esc(why)} (lo pagaste {service.m(buy)})")
+                    lines.append(f"Mi regla: {b(verb)} — {esc(why)}")
+                else:
+                    lines.append(i(
+                        "No tengo el precio de compra de este jugador (estaba en tu plantilla antes de "
+                        "que el bot empezara a seguir compras): no puedo calcular el beneficio.",
+                    ))
             keyboard = None
             if offer_id.isdigit() and amount:
                 keyboard = service._keyboard([
