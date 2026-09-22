@@ -992,9 +992,13 @@ _TX_BUY, _TX_SELL, _TX_CLAUSE = models.ACTIVITY_BUY, models.ACTIVITY_SELL, model
 def my_transactions(api: FantasyAPI, world: World, store) -> list[str]:
     """Compras, ventas y cláusulas (pagadas o sufridas) tuyas desde la última vez que se miró
     el feed de actividad, con la ganancia/pérdida calculada cuando se conoce el precio de
-    compra. Usa como marca de agua el id de actividad más alto ya visto —no un TTL— porque el
-    feed siempre devuelve el historial completo: con TTL, pasado ese tiempo se volvería a
-    notificar como si fuera nuevo. La primera vez que se ejecuta no manda nada (evita
+    compra — más un aviso corto ("💸 Venta rival") cada vez que OTRO mánager vende a alguien
+    de su plantilla: mismo feed, sin coste extra de API, y es la señal que antes solo se veía
+    indirectamente si te tocaba a ti (`clause_theft_risk` cuando ya tenían saldo de sobra para
+    una cláusula tuya en concreto) — el usuario pidió enterarse de la venta en sí, no solo del
+    riesgo ya materializado. Usa como marca de agua el id de actividad más alto ya visto —no un
+    TTL— porque el feed siempre devuelve el historial completo: con TTL, pasado ese tiempo se
+    volvería a notificar como si fuera nuevo. La primera vez que se ejecuta no manda nada (evita
     reproducir toda la temporada de golpe), solo registra precios de compra recientes y arranca
     el seguimiento desde ahí."""
     my_id = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), None)
@@ -1009,17 +1013,23 @@ def my_transactions(api: FantasyAPI, world: World, store) -> list[str]:
     cold_start = store.get("last_activity_id") is None
     last_seen = models.to_int(store.get("last_activity_id"))
     newest = last_seen
-    mine = []
+    mine, rival_sales = [], []
     for ev in events:
         eid = models.to_int(ev.id)
         newest = max(newest, eid)
         if eid <= last_seen or ev.player_id is None:
             continue
-        if my_id not in (ev.user1_id, ev.user2_id):
-            continue
-        mine.append(ev)
+        if my_id in (ev.user1_id, ev.user2_id):
+            mine.append(ev)
+        elif ev.type_id == _TX_SELL:
+            # Un rival vende a alguien de su plantilla (a LaLiga, no a ti): sube su saldo, así
+            # que sube su capacidad de pagarte una cláusula o de ganarte una puja — la misma
+            # señal que ya usa `clause_theft_risk`, pero avisada en el momento, no solo cuando
+            # ya te afecta a un jugador concreto.
+            rival_sales.append(ev)
     store.set("last_activity_id", str(newest))
     mine.sort(key=lambda e: models.to_int(e.id))
+    rival_sales.sort(key=lambda e: models.to_int(e.id))
 
     if cold_start:
         for ev in mine:
@@ -1028,7 +1038,13 @@ def my_transactions(api: FantasyAPI, world: World, store) -> list[str]:
                 store.set(f"buy_date:{ev.player_id}", (ev.when or datetime.now(timezone.utc)).isoformat())
         return []
 
-    messages = []
+    manager_names = {r.manager_id: r.manager_name for r in world.standing}
+    messages = [
+        f"{b('💸 Venta rival')}\n{b(manager_names.get(ev.user1_id, '?'))} vendió a "
+        f"{b(_player_name(api, world, ev.player_id))}\nCobrado: {m(ev.amount)}\n"
+        f"{i('Ahora tiene más margen para pagarte una cláusula o ganarte una puja.')}"
+        for ev in rival_sales
+    ]
     for ev in mine:
         name = b(_player_name(api, world, ev.player_id))
         if ev.type_id == _TX_BUY:

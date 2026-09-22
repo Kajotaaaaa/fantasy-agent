@@ -541,7 +541,7 @@ def _watch_once(store: Store, s) -> str:
 
     tx = service.my_transactions(api, world, store)
     if tx:
-        notify.send_telegram(s, "<b>📒 Movimientos en tu equipo</b>\n\n" + "\n\n".join(tx))
+        notify.send_telegram(s, "<b>📒 Movimientos</b>\n\n" + "\n\n".join(tx))
 
     try:
         audit = service.audit_my_cash(api, world, store)
@@ -603,12 +603,13 @@ def _watch_once(store: Store, s) -> str:
 
 
 def cmd_movements(args, s) -> None:
-    """Compras/ventas/clausulas tuyas desde la ultima vez que se miro (marca de agua en sqlite)."""
+    """Compras/ventas/clausulas tuyas, y ventas de rivales (mismo feed), desde la ultima vez
+    que se miro (marca de agua en sqlite)."""
     api = FantasyAPI(s)
     world = _world(api, s, trends=False)
     store = Store(s.db_file)
     tx = service.my_transactions(api, world, store)
-    text = "<b>📒 Movimientos en tu equipo</b>\n\n" + "\n\n".join(tx) if tx else "Sin movimientos nuevos."
+    text = "<b>📒 Movimientos</b>\n\n" + "\n\n".join(tx) if tx else "Sin movimientos nuevos."
     _out(s, text, args.telegram)
 
 

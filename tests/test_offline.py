@@ -142,6 +142,29 @@ class Tests(unittest.TestCase):
         report = service.sell_candidates_report(world, store)
         self.assertIn("ya en venta", report)
 
+    def test_my_transactions_alerts_on_rival_sale(self):
+        # El usuario pidió enterarse cuando un rival vende a alguien de su plantilla (le sube
+        # el saldo, más margen para pagarle cláusulas o ganarle pujas) — mismo feed de
+        # actividad que ya se pedía para tus propios movimientos, sin llamada extra a la API.
+        class ActivityAPI(FakeAPI):
+            def activity(self, lid, index=0):
+                return [{
+                    "id": "500", "activityTypeId": 33, "user1Id": "U2", "playerMasterId": "pepe3",
+                    "amount": 12_000_000, "createdAt": NOW.isoformat(),
+                }]
+
+        api = ActivityAPI()
+        world = service.build_world(api, self.s)
+        store = Store(Path(tempfile.mkdtemp()) / "act.sqlite3")
+        store.set("last_activity_id", "0")  # sin esto, la primera pasada es "cold start" (no avisa)
+        tx = service.my_transactions(api, world, store)
+        self.assertEqual(len(tx), 1)
+        self.assertIn("Venta rival", tx[0])
+        self.assertIn("Pepe", tx[0])
+        self.assertIn("pepe-J3", tx[0])
+        # No se repite en la siguiente pasada (marca de agua ya avanzada).
+        self.assertEqual(service.my_transactions(api, world, store), [])
+
     def test_pending_bid_changes_instead_of_new_bid(self):
         from fantasy_agent import flip
 

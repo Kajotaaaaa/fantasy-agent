@@ -279,13 +279,17 @@ contra la liga real de producción:
 - **TOP de liga** (`service.league_top_ids`, top 3 por posición en puntos totales de TODA
   LaLiga): son fichajes prioritarios, no oportunidades de inversión — se excluyen de
   `investment_report` y aparecen siempre en `market_report` aunque su score sea bajo.
-- **Movimientos propios** (`service.my_transactions`, endpoint `api.activity`, sin documentar):
-  tipos identificados cruzando contra la plantilla real: `31` compra en mercado LaLiga, `33`
-  venta, `1` cláusula pagada entre managers (`user1` paga, `user2` la sufre/cobra); `4`
-  blindaje y `6` bono semanal no son transacciones de jugador. Usa como marca de agua el id de
-  actividad más alto visto (`kv.last_activity_id`, sin TTL — el feed devuelve todo el
-  histórico siempre) y cachea el precio de compra por jugador (`kv.buy_price:<id>`) para poder
-  calcular ganancia/pérdida real en la venta o cláusula siguiente.
+- **Movimientos propios y ventas de rivales** (`service.my_transactions`, endpoint
+  `api.activity`, sin documentar): tipos identificados cruzando contra la plantilla real: `31`
+  compra en mercado LaLiga, `33` venta, `1` cláusula pagada entre managers (`user1` paga,
+  `user2` la sufre/cobra); `4` blindaje y `6` bono semanal no son transacciones de jugador.
+  Usa como marca de agua el id de actividad más alto visto (`kv.last_activity_id`, sin TTL — el
+  feed devuelve todo el histórico siempre) y cachea el precio de compra por jugador
+  (`kv.buy_price:<id>`) para poder calcular ganancia/pérdida real en la venta o cláusula
+  siguiente. Petición del usuario (2026-09-22): avisar también de "💸 Venta rival" cuando OTRO
+  mánager vende (tipo `33`, `user1_id` != el tuyo) — mismo feed ya pedido cada tick, sin
+  llamada extra a la API; antes esa subida de saldo rival solo se veía indirectamente si ya
+  amenazaba a una cláusula tuya concreta (`clause_theft_risk`), no en el momento de la venta.
 - **Corta pérdidas** (`analysis.loss_cut_candidates`, `service.losing_positions_report`):
   compara el valor de mercado actual de tus jugadores contra `kv.buy_price:<id>` (lo que
   pagaste de verdad, no una referencia arbitraria). Si ya está recuperando (`trend.d3 > 1%`)
