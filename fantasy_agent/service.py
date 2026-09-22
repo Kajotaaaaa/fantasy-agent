@@ -365,7 +365,9 @@ def _plan_lines(plan: analysis.BidPlan, num_bids: int = 0, days: int = 3) -> lis
             "te quedas la mitad de la ganancia"
         )
     if plan.max_bid:
-        if plan.max_reason == "cushion":
+        if plan.max_reason == "value":
+            why = f"lo que se espera que valga en {days} días — no pierdes, se recupera al revenderlo/clausularlo"
+        elif plan.max_reason == "cushion":
             bids_note = f"{num_bids} puja{'s' if num_bids != 1 else ''} ya puestas" if num_bids else "rivales con saldo de sobra"
             why = f"hay competencia visible ({bids_note}), para no perderlo por poco"
         else:

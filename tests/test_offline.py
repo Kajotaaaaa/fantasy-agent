@@ -375,9 +375,12 @@ class Tests(unittest.TestCase):
         # Sin subida no hay margen que justificar; sin referencia de mercado, ni techo.
         flat = analysis.bid_plan(10_000_000, 10_000_000, analysis.Trend(0, 0, 0), 7.5, 0, False)
         self.assertEqual((flat.margin, flat.expected, flat.max_bid), (None, None, None))
-        # Un techo que no supera la puja anterior no aporta nada.
+        # Un techo por puntos que no supera la puja anterior no gana el "máximo" — pero el
+        # valor completo proyectado (sin repartir con nadie, a diferencia de "con margen") sí
+        # suele superarlo, así que el botón igualmente sale con ESE motivo.
         low = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.74, False)
-        self.assertIsNone(low.max_bid)
+        self.assertEqual(low.max_bid, 10_613_000)
+        self.assertEqual(low.max_reason, "value")
         # Y nunca pasa del doble del mínimo, aunque los puntos "digan" mucho más.
         cheap = analysis.bid_plan(1_000_000, 1_000_000, analysis.Trend(0, 0, 0), 3.5, 0.29, False)
         self.assertEqual(cheap.max_bid, 2_000_000)
@@ -405,12 +408,17 @@ class Tests(unittest.TestCase):
         # el colchon; se redondea a miles al alza y nunca pasa del 8%.
         self.assertEqual(analysis.competition_bid(10_000_000, 2, 0), 10_400_000)
         self.assertEqual(analysis.competition_bid(10_000_000, 10, 10), 10_800_000)  # tope 8%
-        # El colchon no aparece como "máximo" si el margen por tendencia ya lo supera de sobra.
+        # Con tendencia alcista, el colchón (10.2M) queda por debajo de la puja "con margen"
+        # (10.307M), pero el valor completo proyectado (10.613M, sin repartir con nadie) sí la
+        # supera: el "máximo" sale igualmente, con ESE motivo.
         rising = analysis.Trend(2.0, 6.0, 12.0)
         plan = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.0, False, existing_bids=1)
-        self.assertIsNone(plan.max_bid)  # margen (10.307M) > colchón (10.2M): no repetir botón
+        self.assertEqual(plan.max_bid, 10_613_000)
+        self.assertEqual(plan.max_reason, "value")
+        # Sin tendencia (sin valor proyectado que ofrecer), el colchón por competencia es lo
+        # único que puede justificar un "máximo".
         flat = analysis.bid_plan(10_000_000, 10_000_000, analysis.Trend(0, 0, 0), 7.5, 0.0, False, existing_bids=1)
-        self.assertEqual(flat.max_bid, 10_200_000)  # sin margen que lo cubra, sí sale como "máximo"
+        self.assertEqual(flat.max_bid, 10_200_000)
         self.assertEqual(flat.max_reason, "cushion")
 
     def test_buy_sections_one_message_per_player(self):

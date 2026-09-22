@@ -478,8 +478,18 @@ reglas"), así que ahora comparten un botón (`BidPlan.max_bid`/`max_reason`, 20
   "el fichaje se queda en mi plantilla 14 días hasta que se puede revender por cláusula, el
   margen disponible debería ser mayor que para un flip de 3 días"). Mismo criterio que ya usa
   `clause_verdict` para "¿esto se paga solo en 14 días?".
-- 🏆 **máximo (nuestras reglas)** = el MAYOR entre dos cantidades independientes, ninguna es
-  sobre tendencia de precio:
+- 🏆 **máximo (nuestras reglas)** = el MAYOR entre tres cantidades independientes:
+  - *Valor completo proyectado* (mismo `expected` que calcula "con margen", pero SIN repartir
+    con nadie — 2026-09-22, corrección real: la primera versión de "máximo" solo miraba
+    competencia/puntos y podía salir POR DEBAJO de lo que "con margen" ya proyectaba, lo cual
+    no tenía sentido. Razonamiento del usuario: en un fichaje para el once no buscas beneficio,
+    lo vas a usar — pagar hasta lo que va a valer igualmente en `days` no es perder dinero, se
+    recupera al revenderlo o que te lo clausulen). Mismo tope que el techo: nunca más del
+    doble del mínimo.
+  - *Techo por puntos* (`bid_ceiling`, "lo quiero sí o sí") — +30% si TOP de liga, capado a 2x
+    el mínimo (con pocas referencias se dispara: un medio de 0.70M dio un techo de 12M) y solo
+    con ≥3 referencias de mercado en su posición (`position_ppm_benchmark`). No sale para
+    "Inversión" (flipeo, no fichaje para el once).
   - *Colchón por competencia* (`analysis.competition_bid`, 2026-09-21: perdimos a Yuri por
     solo 1M pujando el mínimo justo) — +1% sobre el mínimo por cada punto de competencia
     VISIBLE (nunca lo que puja nadie, eso sigue ciego), hasta 8% tope. Competencia = pujas ya
@@ -487,12 +497,10 @@ reglas"), así que ahora comparten un botón (`BidPlan.max_bid`/`max_reason`, 20
     ya confirmado) + rivales cuyo saldo estimado llegaría al mínimo (`service._rivals_can_afford`,
     "seguro"+"dudoso" de `can_bid`, requiere `rival_cash` — sin él se calcula solo con las
     pujas puestas; disponible en informe diario y comando `market`, no en "Nuevo en el
-    mercado"/"Tus pujas pendientes", que salen más seguido y salvarían un pedido caro).
-  - *Techo por puntos* (`bid_ceiling`, "lo quiero sí o sí") — +30% si TOP de liga, capado a 2x
-    el mínimo (con pocas referencias se dispara: un medio de 0.70M dio un techo de 12M) y solo
-    con ≥3 referencias de mercado en su posición (`position_ppm_benchmark`). No sale para
-    "Inversión" (flipeo, no fichaje para el once).
-  Solo aparece si el mayor de los dos supera claramente la puja "con margen" (o el mínimo si
+    mercado"/"Tus pujas pendientes", que salen más seguido y saldrían un pedido caro). Es la
+    única de las tres que cubre el caso SIN tendencia alcista (sin ella, "valor completo" es
+    None).
+  Solo aparece si el mayor de las tres supera claramente la puja "con margen" (o el mínimo si
   no hay margen) — si no, no aporta nada nuevo y no sale el botón.
 - La cantidad viaja en el código del botón: lo que confirmas es exactamente lo que se puja. No
   se ofrece ninguna puja que supere tu saldo (regla del usuario: prohibido quedarse en negativo).

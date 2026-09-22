@@ -211,11 +211,18 @@ def bid_plan(
       `clause_verdict` para "¿esto se paga solo en 14 días?".
     - `max_bid`: "máximo según nuestras reglas" (2026-09-22, petición del usuario: solo tres
       botones — mínimo, margen y máximo — en vez de colchón y techo como botones aparte, que
-      confundían). Es el MAYOR entre el techo por puntos (`bid_ceiling`, "lo quiero sí o sí") y
-      el colchón por competencia (`competition_bid`, pujas ya puestas + rivales con saldo): dos
-      razones distintas para poder llegar más alto, un solo botón con el número más generoso de
-      las dos. Solo sale si supera claramente la puja "con margen" (o el mínimo si no hay
-      margen) — si no, no aporta nada nuevo.
+      confundían). Es el MAYOR entre tres cantidades independientes:
+      1. El valor completo proyectado a `days` (`expected`, el mismo que calcula "con margen"
+         pero SIN repartir con nadie): no buscas beneficio en un fichaje para el once, lo vas
+         a usar, así que pagar hasta lo que va a valer igualmente en ese plazo no es perder
+         dinero — se recupera en cuanto lo revendas o lo clausulen (corrección real,
+         2026-09-22: antes el "máximo" solo miraba competencia/puntos y podía salir POR DEBAJO
+         de lo que el propio "con margen" ya proyectaba que valdría, lo cual no tenía sentido).
+      2. El techo por puntos (`bid_ceiling`, "lo quiero sí o sí").
+      3. El colchón por competencia (`competition_bid`, pujas ya puestas + rivales con saldo) —
+         cubre el caso sin tendencia alcista pero con competencia real (Yuri, 2026-09-21).
+      Solo sale si el mayor de los tres supera claramente la puja "con margen" (o el mínimo si
+      no hay margen) — si no, no aporta nada nuevo.
     Las cantidades se redondean a miles hacia arriba (no por debajo del mínimo)."""
     margin = expected = None
     if market_value:
@@ -229,21 +236,21 @@ def bid_plan(
             gain = expected - minimum
             if gain > minimum * 0.02:
                 margin = -(-round(minimum + gain * 0.5) // 1000) * 1000
+    full_value = None
+    if expected is not None and expected > minimum:
+        # Mismo tope que el techo por puntos: nunca más del doble del mínimo, para que una
+        # racha extrema compuesta 14 días no dispare una puja ya ilógica.
+        full_value = -(-min(round(expected), minimum * 2) // 1000) * 1000
     ceiling = bid_ceiling(avg_points, alternative_ppm, is_top) or None
     if ceiling is not None:
         # Nunca más del doble del mínimo: con pocas referencias de mercado el techo por puntos
         # se dispara (un medio de 0.70M salió con techo de 12M) y eso ya no es una puja lógica.
         ceiling = -(-min(ceiling, minimum * 2) // 1000) * 1000
-        if ceiling <= (margin or minimum) * 1.01:
-            ceiling = None
     cushion = competition_bid(minimum, existing_bids, rivals_can_afford)
-    if cushion is not None and cushion <= (margin or 0):
-        cushion = None  # el margen ya cubre de sobra el colchón, no aporta nada
-    max_bid = max_reason = None
-    if cushion is not None or ceiling is not None:
-        max_bid, max_reason = max(
-            ((cushion or 0, "cushion"), (ceiling or 0, "ceiling")), key=lambda pair: pair[0],
-        )
+    candidates = [(full_value or 0, "value"), (ceiling or 0, "ceiling"), (cushion or 0, "cushion")]
+    max_bid, max_reason = max(candidates, key=lambda pair: pair[0])
+    if max_bid <= (margin or minimum) * 1.01:
+        max_bid, max_reason = None, ""
     return BidPlan(minimum, margin, expected if margin else None, max_bid, max_reason)
 
 
