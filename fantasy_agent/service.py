@@ -156,13 +156,12 @@ def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World
         (my_slots if row.team_id == my_team_id else rival_slots).extend(slots)
 
     market = models.parse_market(api.market(league_id))
-    # Base: los 20 equipos reales de LaLiga (cubre también el rival de la jornada de un club sin
-    # ningún jugador en esta liga privada); las plantillas pueden pisar el nombre si difiere.
-    try:
-        team_names = models.all_team_names(api.players())
-    except Exception:
-        team_names = {}
-    team_names.update({sl.player.team_id: sl.player.team for sl in (*my_slots, *rival_slots) if sl.player.team != "?"})
+    # Solo se conoce el nombre de un equipo real si alguno de sus jugadores está en una
+    # plantilla de esta liga: `api.players()` (el listado público) NO trae el nombre del
+    # equipo, solo `teamId` (comprobado 2026-09-22 contra la cuenta real) — y el mercado
+    # tampoco. Si un club real no tiene NINGÚN jugador en ninguna plantilla de la liga, no hay
+    # forma de saber su nombre y el rival de la jornada sale como "equipo #<id>".
+    team_names = {sl.player.team_id: sl.player.team for sl in (*my_slots, *rival_slots) if sl.player.team != "?"}
     for item in market:
         if item.player.team == "?" and item.player.team_id in team_names:
             item.player.team = team_names[item.player.team_id]
@@ -241,7 +240,7 @@ def bid_ceiling_report(world: World, player: models.Player) -> str:
     is_top = player.id in world.league_top_ids
     ceiling = analysis.bid_ceiling(player.avg_points, benchmark, is_top)
     star = "🌟 " if is_top else ""
-    header = f"{star}{b(player.name)} <i>{player.position}·{esc(player.team)}</i> · {player.avg_points:.1f}p/partido"
+    header = f"{star}{b(player.name)} <i>{player.position}·{esc(analysis.team_label(player.team))}</i> · {player.avg_points:.1f}p/partido"
     header += f" · tarifa {benchmark:.2f}p/M" if benchmark else " · " + i("sin referencia de mercado en su posición")
     lines = [header]
     if ceiling:
@@ -438,7 +437,7 @@ def _market_card(
     star = "🌟 " if is_top else ""
     plan = _plan_for(world, item, trend, is_top, rival_cash=rival_cash)
     text = "\n".join([
-        f"{star}{b(p.name)}  <i>{p.position} · {esc(p.team)}</i>",
+        f"{star}{b(p.name)}  <i>{p.position} · {esc(analysis.team_label(p.team))}</i>",
         f"💰 Mínimo {b(m(plan.minimum))} · {p.avg_points:.1f} pts/partido",
         i(analysis.trend_words(trend)),
         *_my_bid_line(item),
@@ -474,7 +473,7 @@ def _investment_card(
     p = item.player
     plan = _plan_for(world, item, trend, False, with_ceiling=False, rival_cash=rival_cash)
     text = "\n".join([
-        f"{b(p.name)}  <i>{esc(p.team)}</i>",
+        f"{b(p.name)}  <i>{esc(analysis.team_label(p.team))}</i>",
         f"💰 Mínimo {b(m(plan.minimum))}",
         i(analysis.trend_words(trend)),
         *_my_bid_line(item),
@@ -569,7 +568,7 @@ def market_arrivals_report(world: World, store) -> tuple[str, dict | None]:
         stars_str = "★" * stars + "☆" * (4 - stars)
         detail = " · ".join(esc(r) for r in reasons) + " · " + analysis.trend_words(trend)
         cards.append(
-            f"{b(p.name)} <i>{p.position}·{esc(p.team)}</i> · {b(m(item.price))} · {stars_str} {label}\n"
+            f"{b(p.name)} <i>{p.position}·{esc(analysis.team_label(p.team))}</i> · {b(m(item.price))} · {stars_str} {label}\n"
             f"{i(detail)}"
         )
     head = f"{b('🗞️ Nuevo en el mercado')}\n{i('Estudio de viabilidad')}"
@@ -1138,7 +1137,7 @@ def _rival_name(world: World, team_id: str) -> str:
         return i("rival: ?")
     rival = world.team_names.get(f.rival_id, f"equipo #{f.rival_id}")
     icon = "🏠" if f.home else "✈️"
-    return i(f"{icon} {rival}")
+    return i(f"{icon} {analysis.team_label(rival)}")
 
 
 def lineup_report(world: World, news: dict[str, dict] | None) -> str:

@@ -92,21 +92,6 @@ def parse_player(d: dict) -> Player:
     )
 
 
-def all_team_names(payload: Any) -> dict[str, str]:
-    """Nombre de cada equipo real de LaLiga (team_id -> nombre), a partir del listado público
-    de jugadores: cubre los 20 equipos aunque ninguno de sus jugadores esté en tu liga privada
-    — a diferencia de construirlo solo a partir de las plantillas (`my_slots`/`rival_slots`),
-    que deja huecos y hace salir "equipo #<id>" para el rival de la jornada de un club sin
-    representación en la liga (2026-09-22, bug real reportado por el usuario)."""
-    out: dict[str, str] = {}
-    for item in as_list(payload, "players", "elements"):
-        team_id = str(pick(item, "team.id", "teamId", default=""))
-        name = str(pick(item, "team.name", "team.shortName", "teamName", default="") or "")
-        if team_id and name:
-            out.setdefault(team_id, name)
-    return out
-
-
 def team_strength(payload: Any) -> tuple[dict[str, float], dict[str, float]]:
     """Media de puntos por partido de portero+defensas (cuánto encaja el equipo real: más bajo
     = defensa floja) y de medios+delanteros (cuánto ataca), por equipo real de LaLiga, a partir

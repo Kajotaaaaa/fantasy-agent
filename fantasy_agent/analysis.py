@@ -33,6 +33,58 @@ def i(text) -> str:
     return f"<i>{esc(text)}</i>"
 
 
+# ---------- identificador visual por equipo real ----------------------------
+# Telegram (Bot API `sendMessage`) no deja insertar imágenes dentro del texto de un mensaje —
+# solo `sendPhoto` aparte, que no tiene sentido para un informe con varios jugadores/equipos en
+# el mismo mensaje — así que no hay forma de poner el escudo real. Esto es lo más parecido: un
+# emoji de colores fijo por club (2026-09-22, petición del usuario), NO el escudo, solo para
+# identificar de un vistazo sin leer el nombre. La API del juego tampoco da el nombre de un
+# equipo real que no tenga ningún jugador en la liga privada (`api.players()` no trae `team`,
+# solo `teamId`; el nombre solo aparece dentro de las plantillas ya cargadas) — para esos casos
+# no hay emoji ni nombre real, sigue saliendo "equipo #<id>".
+TEAM_EMOJI = {
+    "real madrid": "⚪",
+    "fc barcelona": "🔵🔴",
+    "barcelona": "🔵🔴",
+    "atlético de madrid": "🔴🔵",
+    "atletico de madrid": "🔴🔵",
+    "athletic club": "❤️🤍",
+    "real sociedad": "🔵⚪",
+    "real betis": "🟢⚪",
+    "sevilla fc": "⚪🔴",
+    "valencia cf": "🟠⚫",
+    "villarreal cf": "🟡",
+    "celta": "🌌",
+    "rcd espanyol": "🔵⚪",
+    "getafe cf": "🔵",
+    "ca osasuna": "🔴",
+    "c.a. osasuna": "🔴",
+    "rayo vallecano": "❤️⚪",
+    "girona fc": "🔴⚪",
+    "rcd mallorca": "🔴",
+    "ud las palmas": "🟡🔵",
+    "deportivo alavés": "🔵⚪",
+    "deportivo alaves": "🔵⚪",
+    "ca leganés": "🟢⚪",
+    "ca leganes": "🟢⚪",
+    "real valladolid": "🟣⚪",
+    "elche cf": "🟢⚪",
+    "levante ud": "🔵🔴",
+    "real oviedo": "🔵",
+    "rc deportivo": "🔵⚪",
+    "málaga cf": "🔵⚪",
+    "malaga cf": "🔵⚪",
+    "r. racing club": "🟢⚪",
+}
+
+
+def team_label(name: str) -> str:
+    """Nombre del equipo con su emoji de colores delante, si se conoce (ver `TEAM_EMOJI`);
+    si no, el nombre solo. Nunca falla por un club nuevo o no mapeado."""
+    emoji = TEAM_EMOJI.get(name.strip().lower())
+    return f"{emoji} {name}" if emoji else name
+
+
 def _last_sunday(year: int, month: int) -> datetime:
     d = datetime(year, month, 31, 1, 0, tzinfo=timezone.utc)  # el cambio de hora UE es a la 01:00 UTC
     while d.weekday() != 6:  # domingo

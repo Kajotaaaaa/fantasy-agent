@@ -205,12 +205,26 @@ jornada y si se juega en casa o fuera.
   casa/fuera sin dato. Otros usos de `lineup.Candidate`/`expected_points` (comprobar si la
   plantilla alinea un once legal, `offers_watch_report`) dejan `fixture_factor` en su valor por
   defecto (1.0): ahí no importa la precisión de puntos, solo si hay cuerpos disponibles.
-- **Bug real relacionado (2026-09-22): "equipo #&lt;id&gt;" en vez del nombre.** `World.team_names`
-  se construía SOLO a partir de las plantillas (`my_slots`/`rival_slots`): si el rival de la
-  jornada de uno de tus jugadores era un club real sin ningún jugador en tu liga privada, no
-  había forma de saber su nombre y `_rival_name` caía al `f"equipo #{id}"`. Arreglado con
-  `models.all_team_names(api.players())` (mismo endpoint, ya en caché): cubre los 20 equipos
-  reales de LaLiga siempre, y las plantillas solo pisan el nombre si ya se conocía por ahí.
+- **Bug real, límite de la API (2026-09-22): "equipo #&lt;id&gt;" en vez del nombre.**
+  `World.team_names` se construye SOLO a partir de las plantillas (`my_slots`/`rival_slots`):
+  si el rival de la jornada de uno de tus jugadores es un club real SIN ningún jugador en
+  ninguna plantilla de tu liga privada, no hay forma de saber su nombre y `_rival_name` cae al
+  `f"equipo #{id}"`. Se intentó arreglar con `api.players()` (el listado público) pero NO
+  sirve: comprobado contra la cuenta real, esa respuesta solo trae `teamId`, nunca el nombre
+  del equipo — el nombre solo viene dentro de `playerMaster.team` en las plantillas
+  (`api.team`), y el mercado tampoco lo trae (solo `teamId` plano). Sin un endpoint que liste
+  los 20 equipos reales con nombre, este hueco no tiene arreglo limpio por ahora: hoy afecta a
+  2 de los 20 clubes (verificado 2026-09-22, ids `18` y `2`, ninguno de sus jugadores está en
+  ninguna plantilla de esta liga). Revisar si aparece un endpoint nuevo con `probe`.
+- **Identificador visual por equipo (2026-09-22, petición del usuario).** No se pueden poner
+  escudos reales: Telegram (`sendMessage`) no admite imágenes dentro del texto de un mensaje,
+  solo `sendPhoto` aparte, que no tiene sentido para un informe con varios jugadores/equipos en
+  el mismo mensaje. `analysis.team_label(name)` antepone un emoji de colores FIJO (no el
+  escudo, un identificador rápido) según `TEAM_EMOJI` (por nombre, en minúsculas) — si el club
+  no está mapeado (o es un "equipo #&lt;id&gt;" de respaldo), se queda el nombre solo, nunca
+  falla. Se usa en todos los sitios que ya mostraban `player.team`/el rival de la jornada:
+  `_market_card`, `_investment_card`, "Nuevo en el mercado", `bid_ceiling_report` y
+  `_rival_name`.
 - Pendiente, aparcado: riesgo de sanción por acumulación de amarillas — no hay ninguna fuente
   de datos ya usada (ni la API del juego ni el scraping de FutbolFantasy) que exponga tarjetas
   acumuladas; habría que buscar y verificar una fuente nueva antes de tocar esto.
