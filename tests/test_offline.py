@@ -358,6 +358,22 @@ class Tests(unittest.TestCase):
         cheap = analysis.bid_plan(1_000_000, 1_000_000, analysis.Trend(0, 0, 0), 3.5, 0.29, False)
         self.assertEqual(cheap.ceiling, 2_000_000)
 
+    def test_competition_bid_cushion(self):
+        # Caso real (2026-09-21): perdimos a Yuri por solo 1M pujando justo el minimo, sin
+        # ninguna senal de competencia visible en el propio boton. Sin pujas puestas ni rivales
+        # con saldo de sobra, no hay motivo para regalar dinero de mas.
+        self.assertIsNone(analysis.competition_bid(10_000_000, 0, 0))
+        # Con 2 pujas ya puestas (senal fuerte: rivales confirmados, no solo con saldo) sube
+        # el colchon; se redondea a miles al alza y nunca pasa del 8%.
+        self.assertEqual(analysis.competition_bid(10_000_000, 2, 0), 10_400_000)
+        self.assertEqual(analysis.competition_bid(10_000_000, 10, 10), 10_800_000)  # tope 8%
+        # El colchon no aparece si el margen por tendencia ya lo supera de sobra.
+        rising = analysis.Trend(2.0, 6.0, 12.0)
+        plan = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.0, False, existing_bids=1)
+        self.assertIsNone(plan.cushion)  # margen (10.307M) > colchón (10.2M): no repetir botón
+        flat = analysis.bid_plan(10_000_000, 10_000_000, analysis.Trend(0, 0, 0), 7.5, 0.0, False, existing_bids=1)
+        self.assertEqual(flat.cushion, 10_200_000)  # sin margen que lo cubra, sí sale
+
     def test_market_verdict_recovering_scores_like_sustained_rally(self):
         # Bug real (2026-09-22): un jugador que venía cayendo pero ya recupera (trend.recovering)
         # puntuaba igual que uno en caida libre sin más — se quedaba sin el punto extra que sí

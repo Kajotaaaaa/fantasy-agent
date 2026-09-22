@@ -415,7 +415,7 @@ Elegido por el usuario: webhook (no sondeo). Código `<verbo>:<id>`:
 | código | botón | dónde sale | qué ejecuta `cli._act_*` |
 |---|---|---|---|
 | `c:<player_id>` | 💳 Pagar cláusula | alerta de cláusula pagable ya (`open_affordable`) y todas las especulativas | relee la plantilla del rival SIN caché y paga con `playerTeamId` |
-| `b:<listing_id>:<cantidad>` | 💰 mínimo / 📈 margen / 🎯 techo (hasta 3 filas por jugador) | "Mercado para tu once" + "Inversión" (un mensaje) y "Nuevo en el mercado" (solo ≥3 ★) | puja EXACTAMENTE esa cantidad; solo anuncios de LaLiga; nunca < mínimo válido, > saldo ni > 3x el mínimo |
+| `b:<listing_id>:<cantidad>` | 💰 mínimo / 🛡️ colchón / 📈 margen / 🎯 techo (hasta 4 filas por jugador) | "Mercado para tu once" + "Inversión" (un mensaje) y "Nuevo en el mercado" (solo ≥3 ★) | puja EXACTAMENTE esa cantidad; solo anuncios de LaLiga; nunca < mínimo válido, > saldo ni > 3x el mínimo |
 | `s:<player_id>` | 📤 Vender <nombre> <valor> | "Candidatos a vender" (tendencia a la baja) salvo los que ya están en venta | pone a la venta a valor de mercado |
 | `u:<anuncio>:<puja>:<cantidad>` | ✏️ Cambiar puja (solo si ya tienes una pendiente ahí) | "📌 Tus pujas pendientes" (`my_bids_report`, comando `bids`, también en el informe diario) y las tarjetas de compra | `api.update_bid` (PUT, cuerpo sin verificar); comprueba que la puja sigue pendiente y los mismos topes que `b` |
 | `w:<player_id>` | ↩️ Retirar <nombre> | "En venta ahora" (`my_listings_report`, comando `listings`) | retira el anuncio |
@@ -424,9 +424,19 @@ Elegido por el usuario: webhook (no sondeo). Código `<verbo>:<id>`:
 
 Los avisos "se libera en Xh" no llevan botón (aún no se puede pagar).
 
-**Tres pujas por jugador (`analysis.bid_plan`)** — porque las pujas son ciegas y no juega solo
-el usuario: el mínimo es barato pero pierde contra cualquiera que ponga algo más.
+**Hasta cuatro pujas por jugador (`analysis.bid_plan`)** — porque las pujas son ciegas y no
+juega solo el usuario: el mínimo es barato pero pierde contra cualquiera que ponga algo más.
 - 💰 **mínimo** = `service.bid_amount` (mayor de precio pedido y valor de mercado).
+- 🛡️ **con colchón** (`analysis.competition_bid`, 2026-09-22) — regla real del usuario tras
+  perder a Yuri por solo 1M pujando el mínimo justo: +1% sobre el mínimo por cada punto de
+  competencia VISIBLE (nunca lo que puja nadie, eso sigue siendo ciego), hasta un 8% tope.
+  Competencia = pujas ya puestas en el anuncio (`item.bids`/`numberOfBids`, cada una cuenta
+  doble por ser un rival ya confirmado) + rivales cuyo saldo estimado llegaría al mínimo
+  (`service._rivals_can_afford`, "seguro"+"dudoso" de `can_bid`, requiere `rival_cash` — sin
+  él el colchón se calcula solo con las pujas puestas). Sin ninguna señal de competencia
+  (0 pujas, ningún rival con saldo de sobra) NO sale el botón: no hay motivo para regalar
+  dinero de más a ciegas. Si el colchón queda por debajo de la puja "con margen", tampoco sale
+  (sería un botón redundante y más flojo).
 - 📈 **con margen** = mínimo + la MITAD de la ganancia esperada, solo si sube (d3 > 0) y esa
   ganancia supera el 2% del mínimo. Ganancia esperada = valor de mercado proyectando el ritmo
   de 3 días otros 3 (horizonte de flipeo, sin mirar 7 días). Regala solo la mitad del beneficio.
@@ -436,6 +446,9 @@ el usuario: el mínimo es barato pero pierde contra cualquiera que ponga algo m�
   (`position_ppm_benchmark` devuelve 0 con menos). No sale para "Inversión" (flipeo, no once).
 - La cantidad viaja en el código del botón: lo que confirmas es exactamente lo que se puja. No
   se ofrece ninguna puja que supere tu saldo (regla del usuario: prohibido quedarse en negativo).
+- `rival_cash` solo está disponible donde ya se pedía (informe diario, comando `market`); en
+  "Nuevo en el mercado" y "Tus pujas pendientes" el colchón se calcula solo con `item.bids`
+  (pedir el historial completo de rivales ahí saldría caro y esos avisos son más frecuentes).
 ```
 botón "b:<id>" → Worker cambia SU fila a [✅ Confirmar · <etiqueta> "B:<id>"] + [❌ Cancelar "N:b:<id>"]
 "B:<id>" → Worker quita esas filas + repository_dispatch(fantasy-action, action="b:<id>")

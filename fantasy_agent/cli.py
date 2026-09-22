@@ -477,7 +477,9 @@ def cmd_section(args, s) -> None:
         return text or "No tienes a nadie a la venta ahora mismo.", buttons
 
     text, buttons = {
-        "market": lambda: (service.market_report(world, rival_cash=rival_cash), service.market_keyboard(world)),
+        "market": lambda: (
+            service.market_report(world, rival_cash=rival_cash), service.market_keyboard(world, rival_cash=rival_cash),
+        ),
         "trends": lambda: (service.trends_report(world), None),
         "rivals": lambda: (service.rivals_report(world, rival_cash), None),
         "clause-risk": lambda: (

@@ -164,6 +164,24 @@ class BidPlan:
     margin: int | None  # puja "con margen": más que el mínimo porque la subida lo justifica
     expected: int | None  # valor esperado a 3 días que justifica ese margen
     ceiling: int | None  # máximo lógico para "lo quiero sí o sí"
+    cushion: int | None = None  # colchón sobre el mínimo si hay competencia real visible
+
+
+def competition_bid(minimum: int, existing_bids: int, rivals_can_afford: int) -> int | None:
+    """Colchón sobre el mínimo para pujas ciegas, según la competencia que se puede VER ahora
+    mismo (nunca lo que puja nadie, eso sigue siendo ciego): cuántas pujas ya tiene el anuncio
+    (`numberOfBids`, cada una cuenta doble por ser un rival ya confirmado, no solo con saldo) y
+    a cuántos rivales les llegaría el saldo estimado para igualar el mínimo. Sin ninguna señal
+    de competencia (0 pujas, ningún rival con saldo de sobra), el mínimo ya debería bastar y no
+    hay motivo para regalar dinero de más. Con señal, +1% por punto de competencia hasta un
+    8% — la misma idea que el margen de flipeo (regalar parte del margen para ganar más veces),
+    pero aquí para no perder por una diferencia mínima (caso real: Yuri, 2026-09-21, perdido
+    por 1M pujando justo el mínimo)."""
+    score = existing_bids * 2 + rivals_can_afford
+    if score <= 0:
+        return None
+    pct = min(score * 0.01, 0.08)
+    return -(-round(minimum * (1 + pct)) // 1000) * 1000
 
 
 def bid_plan(
@@ -173,8 +191,10 @@ def bid_plan(
     avg_points: float,
     alternative_ppm: float,
     is_top: bool,
+    existing_bids: int = 0,
+    rivals_can_afford: int = 0,
 ) -> BidPlan:
-    """Tres cantidades para el mismo anuncio, porque las pujas son ciegas y no juega solo el
+    """Cuatro cantidades para el mismo anuncio, porque las pujas son ciegas y no juega solo el
     usuario: pujar el mínimo es barato pero pierde contra cualquiera que ponga algo más.
     - `margin`: si sube (d3 > 0) y se espera que valga más de lo que cuesta el mínimo (>2%),
       puja el mínimo + la MITAD de esa ganancia esperada: la ventaja sobre el resto sale de
@@ -185,6 +205,8 @@ def bid_plan(
       ya pasó; no se mira la ventana de 7.
     - `ceiling`: el techo por puntos (`bid_ceiling`) para "lo quiero sí o sí" — solo si queda
       claramente por encima de la puja anterior, si no no aporta nada.
+    - `cushion`: ver `competition_bid` — colchón por competencia visible (pujas ya puestas +
+      rivales con saldo), no por tendencia de precio.
     Las cantidades se redondean a miles hacia arriba (no por debajo del mínimo)."""
     margin = expected = None
     daily = min(trend.d1, trend.d3 / 3)
@@ -200,7 +222,10 @@ def bid_plan(
         ceiling = -(-min(ceiling, minimum * 2) // 1000) * 1000
         if ceiling <= (margin or minimum) * 1.01:
             ceiling = None
-    return BidPlan(minimum, margin, expected if margin else None, ceiling)
+    cushion = competition_bid(minimum, existing_bids, rivals_can_afford)
+    if cushion is not None and cushion <= (margin or 0):
+        cushion = None  # el margen ya cubre de sobra el colchón, no repetir botón
+    return BidPlan(minimum, margin, expected if margin else None, ceiling, cushion)
 
 
 def market_verdict(

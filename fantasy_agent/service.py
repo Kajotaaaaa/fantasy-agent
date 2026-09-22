@@ -297,14 +297,31 @@ def bid_amount(item: models.MarketItem) -> int:
     return max(item.price, item.player.market_value or 0)
 
 
+def _rivals_can_afford(world: World, price: int, rival_cash: dict[str, int] | None) -> int:
+    """Cuántos rivales podrían igualar `price` ahora mismo (saldo estimado, "seguro" + "dudoso"
+    — ver `analysis.can_bid`): la señal de competencia real para `analysis.competition_bid`,
+    no solo un dato informativo."""
+    if not rival_cash:
+        return 0
+    verdicts = [
+        analysis.can_bid(price, cash) for team_id, cash in rival_cash.items() if team_id != world.my_team_id
+    ]
+    return sum(1 for v in verdicts if v in ("yes", "maybe"))
+
+
 def _plan_for(
     world: World, item: models.MarketItem, trend: analysis.Trend, is_top: bool, with_ceiling: bool = True,
+    rival_cash: dict[str, int] | None = None,
 ) -> analysis.BidPlan:
-    """Las tres pujas posibles de un anuncio (ver `analysis.bid_plan`). El techo por puntos solo
-    tiene sentido para fichajes de tu once, no para flipeo (`with_ceiling=False`)."""
+    """Las cuatro pujas posibles de un anuncio (ver `analysis.bid_plan`). El techo por puntos
+    solo tiene sentido para fichajes de tu once, no para flipeo (`with_ceiling=False`). El
+    colchón por competencia usa las pujas ya puestas en el anuncio (`item.bids`, siempre
+    disponible) y, si se pasa `rival_cash`, también cuántos rivales llegan al mínimo."""
     p = item.player
     benchmark = position_ppm_benchmark(world, p.position_id, exclude_id=p.id) if with_ceiling else 0.0
-    return analysis.bid_plan(bid_amount(item), p.market_value, trend, p.avg_points, benchmark, is_top)
+    minimum = bid_amount(item)
+    rivals = _rivals_can_afford(world, minimum, rival_cash)
+    return analysis.bid_plan(minimum, p.market_value, trend, p.avg_points, benchmark, is_top, item.bids, rivals)
 
 
 def _rivals_line(world: World, price: int, rival_cash: dict[str, int] | None) -> list[str]:
@@ -321,8 +338,11 @@ def _rivals_line(world: World, price: int, rival_cash: dict[str, int] | None) ->
     return [i(f"👥 Rivales que pueden pujar: ✅ {yes} · ❔ {maybe} · ❌ {no} (seguro · dudoso · no; saldo estimado ±40M)")]
 
 
-def _plan_lines(plan: analysis.BidPlan) -> list[str]:
+def _plan_lines(plan: analysis.BidPlan, num_bids: int = 0) -> list[str]:
     lines = []
+    if plan.cushion:
+        bids_note = f"{num_bids} puja{'s' if num_bids != 1 else ''} ya puestas" if num_bids else "rivales con saldo de sobra"
+        lines.append(f"🛡️ Con colchón: {b(m(plan.cushion))} · hay competencia visible ({bids_note}), para no perderlo por poco")
     if plan.margin:
         lines.append(
             f"📈 Con margen: {b(m(plan.margin))} · se espera ~{m(plan.expected)} en 3 días, "
@@ -335,15 +355,19 @@ def _plan_lines(plan: analysis.BidPlan) -> list[str]:
 
 def _bid_rows(
     world: World, item: models.MarketItem, trend: analysis.Trend, is_top: bool, with_ceiling: bool = True,
+    rival_cash: dict[str, int] | None = None,
 ) -> list[list[dict]]:
-    """Una fila de botón por cada puja posible (mínimo / con margen / techo). La cantidad viaja
-    en el propio código ("b:<anuncio>:<cantidad>"): lo que confirmas es exactamente lo que se
-    puja, aunque la tendencia cambie entre que se manda el aviso y pulsas. Nunca ofrece una
-    puja que no te llega de saldo (regla del usuario: prohibido quedarse en negativo)."""
+    """Una fila de botón por cada puja posible (mínimo / con colchón / con margen / techo). La
+    cantidad viaja en el propio código ("b:<anuncio>:<cantidad>"): lo que confirmas es
+    exactamente lo que se puja, aunque la tendencia cambie entre que se manda el aviso y
+    pulsas. Nunca ofrece una puja que no te llega de saldo (regla del usuario: prohibido
+    quedarse en negativo)."""
     if not item.listing_id:
         return []
-    plan = _plan_for(world, item, trend, is_top, with_ceiling)
+    plan = _plan_for(world, item, trend, is_top, with_ceiling, rival_cash)
     options = [("💰", "mínimo", plan.minimum)]
+    if plan.cushion:
+        options.append(("🛡️", "colchón", plan.cushion))
     if plan.margin:
         options.append(("📈", "margen", plan.margin))
     if plan.ceiling:
@@ -379,13 +403,13 @@ def market_report(world: World, min_score: float = 8.0, rival_cash: dict[str, in
     for item, trend, is_top in _market_picks(world, min_score):
         p = item.player
         star = "🌟 " if is_top else ""
-        plan = _plan_for(world, item, trend, is_top)
+        plan = _plan_for(world, item, trend, is_top, rival_cash=rival_cash)
         cards.append("\n".join([
             f"{star}{b(p.name)}  <i>{p.position} · {esc(p.team)}</i>",
             f"💰 Mínimo {b(m(plan.minimum))} · {p.avg_points:.1f} pts/partido",
             i(analysis.trend_words(trend)),
             *_my_bid_line(item),
-            *_plan_lines(plan),
+            *_plan_lines(plan, item.bids),
             *_rivals_line(world, plan.minimum, rival_cash),
         ]))
     if not cards:
@@ -394,10 +418,10 @@ def market_report(world: World, min_score: float = 8.0, rival_cash: dict[str, in
     return head + "\n\n" + "\n\n".join(cards)
 
 
-def market_keyboard(world: World, min_score: float = 8.0) -> dict | None:
+def market_keyboard(world: World, min_score: float = 8.0, rival_cash: dict[str, int] | None = None) -> dict | None:
     return _keyboard([
         row for item, trend, is_top in _market_picks(world, min_score)
-        for row in _bid_rows(world, item, trend, is_top)
+        for row in _bid_rows(world, item, trend, is_top, rival_cash=rival_cash)
     ])
 
 
@@ -410,26 +434,26 @@ def investment_report(world: World, top: int = 5, rival_cash: dict[str, int] | N
     cards = []
     for item, t in picks:
         p = item.player
-        plan = _plan_for(world, item, t, False, with_ceiling=False)
+        plan = _plan_for(world, item, t, False, with_ceiling=False, rival_cash=rival_cash)
         cards.append("\n".join([
             f"{b(p.name)}  <i>{esc(p.team)}</i>",
             f"💰 Mínimo {b(m(plan.minimum))}",
             i(analysis.trend_words(t)),
             *_my_bid_line(item),
-            *_plan_lines(plan),
+            *_plan_lines(plan, item.bids),
             *_rivals_line(world, plan.minimum, rival_cash),
         ]))
     head = f"{b('💹 Oportunidades de inversión')}\n{i('Comprar y revender, no para tu once')}"
     return head + "\n\n" + "\n\n".join(cards)
 
 
-def buy_keyboard(world: World) -> dict | None:
+def buy_keyboard(world: World, rival_cash: dict[str, int] | None = None) -> dict | None:
     """Botones de puja de las dos listas de compra (mercado para tu once + inversión). La
-    inversión es flipeo: sin botón de techo por puntos, solo mínimo y con margen."""
-    rows = [row for item, t, top in _market_picks(world) for row in _bid_rows(world, item, t, top)]
+    inversión es flipeo: sin botón de techo por puntos, solo mínimo, colchón y con margen."""
+    rows = [row for item, t, top in _market_picks(world) for row in _bid_rows(world, item, t, top, rival_cash=rival_cash)]
     rows += [
         row for item, t in _investment_picks(world)
-        for row in _bid_rows(world, item, t, False, with_ceiling=False)
+        for row in _bid_rows(world, item, t, False, with_ceiling=False, rival_cash=rival_cash)
     ]
     return _keyboard(rows)
 
@@ -1130,7 +1154,7 @@ def report_sections(
 
     buy_parts = [p for p in (market_report(world, rival_cash=rival_cash), investment_report(world, rival_cash=rival_cash)) if p]
     if buy_parts:
-        sections.append(("\n\n".join(buy_parts), buy_keyboard(world)))
+        sections.append(("\n\n".join(buy_parts), buy_keyboard(world, rival_cash)))
 
     mine_parts = [trends_report(world)]
     sell_buttons = None
