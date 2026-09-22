@@ -418,9 +418,19 @@ def sell_high_candidates(trends: dict[str, tuple[Player, Trend]], mine: set[str]
 
 
 # ---------- alarmas de cláusulas --------------------------------------------
-# Umbrales para avisar más de una vez de la misma cláusula según se acerca su liberación
-# (24h, 6h, 1h): cada uno dispara una alerta nueva la primera vez que se cruza.
-UNLOCK_ALERT_TIERS_HOURS = (24, 6, 1)
+# Un trabajo de GitHub Actions aguanta ~6h: solo se puede armar un snipe de cláusula (comprar EN
+# EL SEGUNDO que se desbloquea) con menos que esto por delante. Vive aquí (no en `service.py`,
+# que lo importa) para poder usarlo también como tier de aviso, ver más abajo.
+MAX_ARM_HOURS = 5.75
+
+# Umbrales para avisar más de una vez de la misma cláusula según se acerca su liberación: cada
+# uno dispara una alerta nueva la primera vez que se cruza. `MAX_ARM_HOURS` va incluido a
+# propósito (bug real, 2026-09-22): sin él, un aviso podía caer justo por encima del límite para
+# armar el botón (p.ej. "se libera en 5h 47min", 2 minutos por encima de las 5h45min) y, como esa
+# alerta ya queda marcada como enviada, no se repetía cuando SÍ se podía armar — el usuario se
+# quedaba sin el botón hasta el tier de 1h. Con `MAX_ARM_HOURS` como tier propio, hay un aviso
+# dedicado justo en el momento en que el botón aparece.
+UNLOCK_ALERT_TIERS_HOURS = (24, 6, MAX_ARM_HOURS, 1)
 
 
 @dataclass

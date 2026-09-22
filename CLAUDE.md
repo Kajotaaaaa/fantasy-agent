@@ -21,12 +21,23 @@ Pedido del usuario: ser el primero en clausular. El vigilante de 30 min y el bot
 s de Telegram -> Worker -> runner) llegan tarde, pero la hora de desbloqueo
 (`buyoutClauseLockedEndTime`) se conoce AL SEGUNDO. Solución: ARMAR la compra con antelación.
 - Botón `a:<player_id>` "🎯 Comprar X al desbloquearse (HH:MM:SS)" en las alertas de cláusula
-  `unlock_soon` con menos de `service.MAX_ARM_HOURS` (5.75 h) por delante y en el informe
-  `unlocks` (próximos desbloqueos de 24 h de TODOS los rivales, sin filtro de valor: aquí armas a
-  quien quieras). Doble confirmación de siempre en el Worker; el verbo `a` lanza
-  `repository_dispatch` `fantasy-clause-snipe` (mapa `EVENTS` del Worker) ->
-  `.github/workflows/clause-snipe.yml` (timeout 355 min, sin concurrencia: se pueden armar
-  varias) -> `python -m fantasy_agent clause-snipe "a:<id>"`.
+  `unlock_soon` con menos de `analysis.MAX_ARM_HOURS` (5.75 h, `service.MAX_ARM_HOURS` es un
+  alias del mismo valor) por delante y en el informe `unlocks` (próximos desbloqueos de 24 h de
+  TODOS los rivales, sin filtro de valor: aquí armas a quien quieras). Doble confirmación de
+  siempre en el Worker; el verbo `a` lanza `repository_dispatch` `fantasy-clause-snipe` (mapa
+  `EVENTS` del Worker) -> `.github/workflows/clause-snipe.yml` (timeout 355 min, sin
+  concurrencia: se pueden armar varias) -> `python -m fantasy_agent clause-snipe "a:<id>"`.
+- **Bug real (2026-09-22): aviso sin botón de armar por un desajuste de tiempos.** Los avisos de
+  `unlock_soon` se repiten por "tiers" fijos (`analysis.UNLOCK_ALERT_TIERS_HOURS`, antes
+  `(24, 6, 1)`) para no repetir el mismo aviso en cada vigilancia — cada tier dispara una alerta
+  nueva la primera vez que se cruza, deduplicada por clave (incluye el tier) en `store`. Como
+  ningún tier coincidía con `MAX_ARM_HOURS` (5.75h), un aviso podía caer justo por encima del
+  límite (ej. "se libera en 5h 47min", 2 min por encima de las 5h45min) sin botón — y como esa
+  alerta ya quedaba marcada como enviada, nunca se repetía cuando SÍ se podía armar; el usuario
+  se quedaba sin el botón hasta el tier de 1h (varias horas después), aunque `fantasy clauses`
+  a mano sí lo mostraba ya. Arreglado añadiendo `MAX_ARM_HOURS` como tier propio en
+  `UNLOCK_ALERT_TIERS_HOURS`: ahora hay un aviso dedicado, con botón, justo en el momento en que
+  se puede armar.
 - El trabajo espera con la hora del servidor (cabecera `Date`), a T-25 s relee la plantilla del
   dueño (id de hueco y cláusula al día) y el saldo, cuenta atrás editando un mensaje de Telegram
   cada 10 s desde T-60 s, y desde T-0.5 s (`FIRE_LEAD`: la hora del servidor solo se lee con

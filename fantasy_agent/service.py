@@ -994,7 +994,7 @@ def clause_titularidad_candidates(world: World, s: Settings) -> list[models.Play
     return analysis.clause_candidate_players(world.rival_slots, now, s.clause_window_hours)
 
 
-MAX_ARM_HOURS = 5.75  # un trabajo de GitHub aguanta ~6 h: solo se puede armar con menos que esto por delante
+MAX_ARM_HOURS = analysis.MAX_ARM_HOURS  # única fuente: vive en analysis.py, ver su comentario
 
 
 def _clause_keyboard(player_id: str) -> dict:
