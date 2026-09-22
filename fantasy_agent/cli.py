@@ -423,7 +423,9 @@ def cmd_section(args, s) -> None:
     api = FantasyAPI(s)
     world = _world(
         api, s,
-        trends=args.cmd in ("market", "trends", "report", "losses", "sell-candidates", "market-news", "listen", "bids"),
+        trends=args.cmd in (
+            "market", "trends", "report", "losses", "sell-candidates", "market-news", "listen", "bids", "clause-raise",
+        ),
     )
     if args.cmd in ("clauses", "clauses-hot", "report"):
         service.ensure_clause_trends(api, world, s)
@@ -438,10 +440,11 @@ def cmd_section(args, s) -> None:
 
     store = Store(s.db_file) if args.cmd in (
         "report", "losses", "sell-candidates", "market-news", "listen", "rivals", "clause-risk", "advice", "market",
+        "clause-raise",
     ) else None
 
     rival_cash = {}
-    if args.cmd in ("rivals", "clause-risk", "advice", "market"):
+    if args.cmd in ("rivals", "clause-risk", "advice", "market", "clause-raise"):
         rival_cash = service.estimate_rival_cash(api, world, store)
 
     if args.cmd == "report":
@@ -484,6 +487,11 @@ def cmd_section(args, s) -> None:
         "rivals": lambda: (service.rivals_report(world, rival_cash), None),
         "clause-risk": lambda: (
             service.clause_theft_report(world, rival_cash) or "Ningún rival te llega ahora mismo.", None,
+        ),
+        "clause-raise": lambda: (
+            service.clause_raise_report(world, rival_cash)
+            or "Ninguna cláusula tuya está pegada al valor de mercado ahora mismo, no hace falta anzuelo.",
+            None,
         ),
         "lineup": lambda: (service.lineup_report(world, news), None),
         "losses": lambda: (service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.", None),
@@ -683,6 +691,7 @@ def main(argv: list[str] | None = None) -> None:
         ("clauses", "Alarmas de cláusulas"),
         ("clauses-hot", "Cláusulas especulativas: caras pero con racha fuerte sostenida"),
         ("clause-risk", "Tus jugadores que algún rival podría pagarte de cláusula (saldo estimado)"),
+        ("clause-raise", "Cuánto conviene subir la cláusula de esos jugadores para que no te los roben barato"),
         ("lineup", "Once recomendado"),
         ("losses", "Jugadores tuyos por debajo de lo que pagaste"),
         ("sell-candidates", "Candidatos a vender: tendencia bajando 3 días"),

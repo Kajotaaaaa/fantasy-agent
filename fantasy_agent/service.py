@@ -904,6 +904,51 @@ def clause_theft_report(world: World, rival_cash: dict[str, int]) -> str:
     return head + "\n\n" + "\n".join(cards)
 
 
+def clause_raise_report(world: World, rival_cash: dict[str, int] | None = None) -> str:
+    """Cuánto conviene subir la cláusula de tus jugadores pegada a su valor de mercado (robo
+    barato para cualquier rival con el dinero, sea quien sea) — un ANZUELO, no un muro: sube
+    justo hasta el mismo tope de "cláusula lógica" que usa el bot para juzgar cláusulas ajenas
+    (`analysis.CLAUSE_BAIT_RATIO`), así sigue siendo creíble/pagable y, si un rival pica, ganas
+    gracias al x2 del juego (`analysis.clause_raise_plan`). Corregido 2026-09-22 tras una
+    primera versión que intentaba dejarla fuera del alcance de todo el mundo — eso fundiría la
+    caja en precios que ya nadie pagaría. Prioriza por rendimiento (protege primero a los
+    mejores) y reparte tu saldo en ese orden — lo ya "comprometido" en uno no cuenta para el
+    siguiente. `rival_cash` es opcional, solo para anotar si ya hay algún rival concreto que
+    podría picar hoy mismo."""
+    now = datetime.now(timezone.utc)
+    danger = [
+        slot for slot in world.my_slots
+        if slot.clause_open(now) and slot.player.market_value > 0
+        and slot.clause <= slot.player.market_value * analysis.CLAUSE_DANGER_RATIO
+    ]
+    if not danger or not world.my_cash:
+        return ""
+    danger.sort(key=lambda slot: slot.player.avg_points, reverse=True)
+    others_cash = {tid: cash for tid, cash in (rival_cash or {}).items() if tid != world.my_team_id}
+    remaining = world.my_cash
+    cards = []
+    for slot in danger:
+        plan = analysis.clause_raise_plan(slot.clause, slot.player.market_value, remaining)
+        if not plan:
+            continue
+        remaining -= plan.cost
+        threats = [t for t, cash in others_cash.items() if cash >= slot.clause]
+        watchers = f" · {len(threats)} rival(es) ya podrían pagarla hoy" if threats else ""
+        cards.append(
+            f"{b(slot.player.name)} · cláusula {m(slot.clause)} → {b(m(plan.new_clause))}{watchers}\n"
+            f"Paga {b(m(plan.cost))} para subirla {m(plan.raise_amount)} "
+            f"· sigue siendo un anzuelo creíble (≤{analysis.CLAUSE_BAIT_RATIO}x mercado)\n"
+            f"{i(f'Si pica, ganas {m(plan.guaranteed_profit)} de más por haberla subido')}"
+        )
+    if not cards:
+        return ""
+    head = (
+        f"{b('🎣 Anzuelo de cláusula')}\n"
+        f"{i('Pegada al valor de mercado: sube lo justo para que siga siendo un robo rentable para TI, no un muro')}"
+    )
+    return head + "\n\n" + "\n".join(cards)
+
+
 def daily_advice_report(world: World, rival_cash: dict[str, int] | None = None) -> str:
     """Consejo táctico del día — un cierre con un solo paso concreto, priorizado por lo que
     de verdad urge ahora mismo: primero si te pueden clausular algo importante, luego si
@@ -1270,6 +1315,9 @@ def report_sections(
         theft = clause_theft_report(world, rival_cash)
         if theft:
             sections.append((theft, None))
+        raise_report = clause_raise_report(world, rival_cash)
+        if raise_report:
+            sections.append((raise_report, None))
         sections.append((rivals_report(world, rival_cash), None))
 
     sections.append((daily_advice_report(world, rival_cash) + "\n\n" + flip_status_report(s, store), None))

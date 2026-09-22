@@ -236,6 +236,24 @@ jornada y si se juega en casa o fuera.
 - Pendiente, aparcado: riesgo de sanción por acumulación de amarillas — no hay ninguna fuente
   de datos ya usada (ni la API del juego ni el scraping de FutbolFantasy) que exponga tarjetas
   acumuladas; habría que buscar y verificar una fuente nueva antes de tocar esto.
+- **Subir la cláusula de tus jugadores (2026-09-22, petición del usuario).** Regla del juego
+  confirmada por el usuario: pagar dinero para subir la cláusula de un jugador tuyo te da el
+  DOBLE de subida (pagar 2M sube la cláusula 4M) — `analysis.CLAUSE_RAISE_MULTIPLIER = 2`. Esto
+  significa que la subida es una apuesta con suelo: si el jugador acaba siendo robado de todas
+  formas, la subida se paga sola dos veces (recuperas el coste y ganas lo mismo otra vez); el
+  único riesgo real es inmovilizar dinero en un jugador al que nadie llega a pagarle la
+  cláusula. `analysis.clause_raise_plan(current_clause, max_threat_cash, available_cash,
+  margin=CASH_UNCERTAINTY)`: calcula cuánto pagar para dejar la cláusula por encima de lo que el
+  rival más rico conocido puede pagar (con el mismo margen de error del saldo estimado que ya
+  usa `clause_theft_risk`/`CASH_UNCERTAINTY`), sin pasarse del dinero disponible; devuelve `None`
+  si no hay amenaza real o no queda dinero. `service.clause_raise_report` reutiliza
+  `clause_theft_risk` (jugadores tuyos con la cláusula pagable Y algún rival que hoy podría
+  pagarla) y REPARTE tu saldo entre ellos por prioridad (rendimiento × racha de valor a 7 días,
+  `world.trends`) — lo comprometido en el primero no cuenta para el siguiente, así el dinero
+  limitado va primero al jugador que más compensa proteger. Solo calcula y avisa; NO hay
+  endpoint de escritura para esto (nunca se ha probado contra la cuenta real, decisión explícita
+  del usuario de dejar la ejecución manual en la app por ahora). Nuevo apartado en el informe
+  diario (justo después de "⚠️ Riesgo de que te clausulen") y comando suelto `clause-raise`.
 
 ## Techo de puja (fichajes para el once, no flipeo)
 `analysis.bid_ceiling` + `service.position_ppm_benchmark`/`bid_ceiling_report` (comando

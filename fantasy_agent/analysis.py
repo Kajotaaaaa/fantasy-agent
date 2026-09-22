@@ -951,6 +951,68 @@ def clause_theft_risk(
     return out
 
 
+# El juego devuelve el DOBLE de dinero pagado en subida de cláusula (confirmado por el usuario,
+# 2026-09-22: pagar 2.000.000 sube la cláusula 4.000.000). Esto hace que subir la cláusula de un
+# jugador en riesgo de robo sea una apuesta con suelo: si al final te lo roban de todas formas,
+# la subida se paga sola dos veces (recuperas el coste y ganas lo mismo otra vez) — el único
+# riesgo real es dejar dinero inmovilizado en un jugador al que nunca le pagan la cláusula.
+CLAUSE_RAISE_MULTIPLIER = 2
+
+# Primera versión de esto (2026-09-22) apuntaba a dejar la cláusula fuera del alcance de TODOS
+# los rivales conocidos — el usuario la corrigió: eso funde la caja en cláusulas que ya nadie
+# pagaría (precios de fantasía), y el objetivo real es lo contrario, un ANZUELO: subir lo justo
+# para que, si un rival paga, tú ganes, pero sin dejar de ser una cláusula creíble/"lógica".
+# `CLAUSE_BAIT_RATIO` es el mismo tope que usa el resto del bot para juzgar si una cláusula
+# ajena compensa pagarla (`clause_alerts`/`clause_verdict`, `max_ratio=1.2`): por encima de esto
+# un rival racional ya no muerde el anzuelo. `CLAUSE_DANGER_RATIO` marca cuándo tu propio
+# jugador está pegado al valor de mercado (robo barato, el problema que describió el usuario) y
+# por tanto merece la pena poner el anzuelo.
+CLAUSE_BAIT_RATIO = 1.2
+CLAUSE_DANGER_RATIO = 1.08
+
+
+@dataclass
+class ClauseRaisePlan:
+    cost: int  # lo que hay que pagar de tu bolsillo para conseguir la subida
+    raise_amount: int  # cuánto sube la cláusula (2x el coste)
+    new_clause: int
+    reaches_bait_ratio: bool  # True si la nueva cláusula llega al tope "lógico" (CLAUSE_BAIT_RATIO)
+    guaranteed_profit: int  # si pica el anzuelo (te la pagan), cuánto ganas de más por haberla subido (= cost)
+
+
+def clause_raise_plan(
+    current_clause: int,
+    market_value: int,
+    available_cash: int,
+    bait_ratio: float = CLAUSE_BAIT_RATIO,
+    danger_ratio: float = CLAUSE_DANGER_RATIO,
+) -> ClauseRaisePlan | None:
+    """Cuánto conviene subir la cláusula de un jugador tuyo pegada a su valor de mercado (robo
+    barato para cualquier rival con el dinero). El objetivo NO es dejarla inalcanzable — es un
+    ANZUELO: subirla hasta `bait_ratio` veces el valor de mercado (el mismo tope de "cláusula
+    lógica" que usa el bot para valorar cláusulas ajenas), así sigue siendo un precio que un
+    rival racional pagaría por un jugador que le interese, pero si lo hace, tú ganas gracias al
+    x2 del juego. Devuelve None si la cláusula ya no está en peligro (por encima de
+    `danger_ratio`) o no queda dinero para nada."""
+    if market_value <= 0 or current_clause > market_value * danger_ratio or available_cash <= 0:
+        return None
+    target_clause = round(market_value * bait_ratio)
+    needed_raise = target_clause - current_clause
+    if needed_raise <= 0:
+        return None
+    needed_cost = -(-needed_raise // CLAUSE_RAISE_MULTIPLIER)  # redondeo hacia arriba
+    # A la baja, a un importe manejable en la app (10k): el objetivo es un anzuelo modesto, no
+    # apurar hasta el último euro disponible.
+    cost = (min(needed_cost, available_cash) // 10_000) * 10_000
+    if cost <= 0:
+        return None
+    raise_amount = cost * CLAUSE_RAISE_MULTIPLIER
+    return ClauseRaisePlan(
+        cost=cost, raise_amount=raise_amount, new_clause=current_clause + raise_amount,
+        reaches_bait_ratio=cost >= needed_cost, guaranteed_profit=cost,
+    )
+
+
 # ---------- once recomendado: dificultad del rival + local/visitante --------
 HOME_ADVANTAGE = 0.06  # ventaja/desventaja de jugar en casa o fuera, símil al "home advantage" real
 RIVAL_FACTOR_RANGE = (0.85, 1.15)  # tope al factor de rival: un dato suelto no debe disparar la proyección

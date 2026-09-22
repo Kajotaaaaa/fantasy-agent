@@ -676,5 +676,34 @@ class Tests(unittest.TestCase):
         self.assertEqual(match.id, "10")
 
 
+class ClauseRaiseTests(unittest.TestCase):
+    def test_not_in_danger_no_plan(self):
+        # cláusula ya muy por encima del valor de mercado: no es un robo barato, no hace falta anzuelo
+        self.assertIsNone(analysis.clause_raise_plan(20_000_000, 10_000_000, 50_000_000))
+
+    def test_no_cash_no_plan(self):
+        self.assertIsNone(analysis.clause_raise_plan(10_000_000, 10_000_000, 0))
+
+    def test_bait_targets_logic_ratio_not_unreachable(self):
+        # cláusula pegada al mercado (10M de 10M): el objetivo es 1.2x mercado = 12M, no más
+        plan = analysis.clause_raise_plan(10_000_000, 10_000_000, available_cash=50_000_000)
+        target_clause = round(10_000_000 * analysis.CLAUSE_BAIT_RATIO)
+        needed_cost = -(-(target_clause - 10_000_000) // 2)
+        expected_cost = (needed_cost // 10_000) * 10_000
+        self.assertEqual(plan.cost, expected_cost)
+        self.assertEqual(plan.raise_amount, expected_cost * 2)
+        self.assertLessEqual(plan.new_clause, target_clause)
+        self.assertTrue(plan.reaches_bait_ratio)
+        self.assertEqual(plan.guaranteed_profit, plan.cost)
+        # ni de lejos se funde la caja: el anzuelo cuesta un 10% del valor de mercado, no medio presupuesto
+        self.assertLess(plan.cost, 10_000_000 * 0.15)
+
+    def test_partial_bait_when_cash_is_short(self):
+        plan = analysis.clause_raise_plan(10_000_000, 10_000_000, available_cash=500_000)
+        self.assertEqual(plan.cost, 500_000)
+        self.assertEqual(plan.raise_amount, 1_000_000)
+        self.assertFalse(plan.reaches_bait_ratio)
+
+
 if __name__ == "__main__":
     unittest.main()
