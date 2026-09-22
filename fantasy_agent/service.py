@@ -359,16 +359,18 @@ def _rivals_line(world: World, price: int, rival_cash: dict[str, int] | None) ->
 
 def _plan_lines(plan: analysis.BidPlan, num_bids: int = 0, days: int = 3) -> list[str]:
     lines = []
-    if plan.cushion:
-        bids_note = f"{num_bids} puja{'s' if num_bids != 1 else ''} ya puestas" if num_bids else "rivales con saldo de sobra"
-        lines.append(f"🛡️ Con colchón: {b(m(plan.cushion))} · hay competencia visible ({bids_note}), para no perderlo por poco")
     if plan.margin:
         lines.append(
             f"📈 Con margen: {b(m(plan.margin))} · se espera ~{m(plan.expected)} en {days} días, "
             "te quedas la mitad de la ganancia"
         )
-    if plan.ceiling:
-        lines.append(f"🎯 Si lo quieres sí o sí: hasta {b(m(plan.ceiling))} · más allá, mejor la alternativa del mercado")
+    if plan.max_bid:
+        if plan.max_reason == "cushion":
+            bids_note = f"{num_bids} puja{'s' if num_bids != 1 else ''} ya puestas" if num_bids else "rivales con saldo de sobra"
+            why = f"hay competencia visible ({bids_note}), para no perderlo por poco"
+        else:
+            why = "techo por puntos: más allá, mejor la alternativa del mercado"
+        lines.append(f"🏆 Máximo (nuestras reglas): {b(m(plan.max_bid))} · {why}")
     return lines
 
 
@@ -376,21 +378,20 @@ def _bid_rows(
     world: World, item: models.MarketItem, trend: analysis.Trend, is_top: bool, with_ceiling: bool = True,
     rival_cash: dict[str, int] | None = None,
 ) -> list[list[dict]]:
-    """Una fila de botón por cada puja posible (mínimo / con colchón / con margen / techo). La
-    cantidad viaja en el propio código ("b:<anuncio>:<cantidad>"): lo que confirmas es
-    exactamente lo que se puja, aunque la tendencia cambie entre que se manda el aviso y
-    pulsas. Nunca ofrece una puja que no te llega de saldo (regla del usuario: prohibido
-    quedarse en negativo)."""
+    """Una fila de botón por cada puja posible: mínimo, con margen (si la subida lo justifica) y
+    máximo según nuestras reglas (si el techo por puntos o el colchón por competencia superan
+    claramente el margen). La cantidad viaja en el propio código ("b:<anuncio>:<cantidad>"): lo
+    que confirmas es exactamente lo que se puja, aunque la tendencia cambie entre que se manda
+    el aviso y pulsas. Nunca ofrece una puja que no te llega de saldo (regla del usuario:
+    prohibido quedarse en negativo)."""
     if not item.listing_id:
         return []
     plan = _plan_for(world, item, trend, is_top, with_ceiling, rival_cash)
     options = [("💰", "mínimo", plan.minimum)]
-    if plan.cushion:
-        options.append(("🛡️", "colchón", plan.cushion))
     if plan.margin:
         options.append(("📈", "margen", plan.margin))
-    if plan.ceiling:
-        options.append(("🎯", "techo", plan.ceiling))
+    if plan.max_bid:
+        options.append(("🏆", "máximo", plan.max_bid))
     affordable = [(icon, tag, amount) for icon, tag, amount in options if world.my_cash is None or amount <= world.my_cash]
     if item.my_bid_id:
         # Ya hay una puja tuya pendiente: un segundo POST da error (030.01.09), lo que se puede

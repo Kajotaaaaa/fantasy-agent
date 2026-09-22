@@ -452,7 +452,7 @@ Elegido por el usuario: webhook (no sondeo). Código `<verbo>:<id>`:
 | código | botón | dónde sale | qué ejecuta `cli._act_*` |
 |---|---|---|---|
 | `c:<player_id>` | 💳 Pagar cláusula | alerta de cláusula pagable ya (`open_affordable`) y todas las especulativas | relee la plantilla del rival SIN caché y paga con `playerTeamId` |
-| `b:<listing_id>:<cantidad>` | 💰 mínimo / 🛡️ colchón / 📈 margen / 🎯 techo (hasta 4 filas por jugador) | "Mercado para tu once" + "Inversión" (un mensaje) y "Nuevo en el mercado" (solo ≥3 ★) | puja EXACTAMENTE esa cantidad; solo anuncios de LaLiga; nunca < mínimo válido, > saldo ni > 3x el mínimo |
+| `b:<listing_id>:<cantidad>` | 💰 mínimo / 📈 margen / 🏆 máximo (hasta 3 filas por jugador) | "Mercado para tu once" + "Inversión" (un mensaje por jugador) y "Nuevo en el mercado" (solo ≥3 ★) | puja EXACTAMENTE esa cantidad; solo anuncios de LaLiga; nunca < mínimo válido, > saldo ni > 3x el mínimo |
 | `s:<player_id>` | 📤 Vender <nombre> <valor> | "Candidatos a vender" (tendencia a la baja) salvo los que ya están en venta | pone a la venta a valor de mercado |
 | `u:<anuncio>:<puja>:<cantidad>` | ✏️ Cambiar puja (solo si ya tienes una pendiente ahí) | "📌 Tus pujas pendientes" (`my_bids_report`, comando `bids`, también en el informe diario) y las tarjetas de compra | `api.update_bid` (PUT, cuerpo sin verificar); comprueba que la puja sigue pendiente y los mismos topes que `b` |
 | `w:<player_id>` | ↩️ Retirar <nombre> | "En venta ahora" (`my_listings_report`, comando `listings`) | retira el anuncio |
@@ -461,38 +461,41 @@ Elegido por el usuario: webhook (no sondeo). Código `<verbo>:<id>`:
 
 Los avisos "se libera en Xh" no llevan botón (aún no se puede pagar).
 
-**Hasta cuatro pujas por jugador (`analysis.bid_plan`)** — porque las pujas son ciegas y no
-juega solo el usuario: el mínimo es barato pero pierde contra cualquiera que ponga algo más.
+**Tres pujas por jugador (`analysis.bid_plan`)** — porque las pujas son ciegas y no juega solo
+el usuario: el mínimo es barato pero pierde contra cualquiera que ponga algo más. Antes había
+hasta 4 botones (mínimo/colchón/margen/techo); el usuario pidió simplificar a 3 porque no
+quedaba claro cuándo pujar cada uno — colchón y techo son dos RAZONES distintas para poder
+llegar más alto, pero de cara al usuario es un solo concepto ("lo máximo que pagaría según mis
+reglas"), así que ahora comparten un botón (`BidPlan.max_bid`/`max_reason`, 2026-09-22).
 - 💰 **mínimo** = `service.bid_amount` (mayor de precio pedido y valor de mercado).
-- 🛡️ **con colchón** (`analysis.competition_bid`, 2026-09-22) — regla real del usuario tras
-  perder a Yuri por solo 1M pujando el mínimo justo: +1% sobre el mínimo por cada punto de
-  competencia VISIBLE (nunca lo que puja nadie, eso sigue siendo ciego), hasta un 8% tope.
-  Competencia = pujas ya puestas en el anuncio (`item.bids`/`numberOfBids`, cada una cuenta
-  doble por ser un rival ya confirmado) + rivales cuyo saldo estimado llegaría al mínimo
-  (`service._rivals_can_afford`, "seguro"+"dudoso" de `can_bid`, requiere `rival_cash` — sin
-  él el colchón se calcula solo con las pujas puestas). Sin ninguna señal de competencia
-  (0 pujas, ningún rival con saldo de sobra) NO sale el botón: no hay motivo para regalar
-  dinero de más a ciegas. Si el colchón queda por debajo de la puja "con margen", tampoco sale
-  (sería un botón redundante y más flojo).
 - 📈 **con margen** = mínimo + la MITAD de la ganancia esperada, si esa ganancia supera el 2%
   del mínimo. Regala solo la mitad del beneficio. El horizonte de la proyección depende de
   para qué es la puja (`days` en `bid_plan`, decidido por `with_ceiling` en `_plan_for` — sin
   parámetro nuevo que sincronizar): **3 días** para "Inversión"/flipeo (ritmo del día más bajo
   entre hoy y la media de 3 días, sin mirar 7 — una subida que se frena no debe proyectarse con
   el ritmo de una racha que ya pasó) o **14 días** para "Mercado para tu once"/"Nuevo en el
-  mercado" (`project_value`, ritmo de 7 días más estable — petición del usuario, 2026-09-22:
+  mercado" (`project_value`, ritmo MAYOR entre 7 y 3 días — petición del usuario, 2026-09-22:
   "el fichaje se queda en mi plantilla 14 días hasta que se puede revender por cláusula, el
   margen disponible debería ser mayor que para un flip de 3 días"). Mismo criterio que ya usa
   `clause_verdict` para "¿esto se paga solo en 14 días?".
-- 🎯 **techo "lo quiero sí o sí"** = `bid_ceiling` por puntos (+30% si TOP), solo si queda
-  claramente por encima de la puja anterior, capado a 2x el mínimo (con pocas referencias salió
-  un techo de 12M para un medio de 0.70M) y solo con ≥3 referencias de mercado en su posición
-  (`position_ppm_benchmark` devuelve 0 con menos). No sale para "Inversión" (flipeo, no once).
+- 🏆 **máximo (nuestras reglas)** = el MAYOR entre dos cantidades independientes, ninguna es
+  sobre tendencia de precio:
+  - *Colchón por competencia* (`analysis.competition_bid`, 2026-09-21: perdimos a Yuri por
+    solo 1M pujando el mínimo justo) — +1% sobre el mínimo por cada punto de competencia
+    VISIBLE (nunca lo que puja nadie, eso sigue ciego), hasta 8% tope. Competencia = pujas ya
+    puestas en el anuncio (`item.bids`/`numberOfBids`, cada una cuenta doble por ser un rival
+    ya confirmado) + rivales cuyo saldo estimado llegaría al mínimo (`service._rivals_can_afford`,
+    "seguro"+"dudoso" de `can_bid`, requiere `rival_cash` — sin él se calcula solo con las
+    pujas puestas; disponible en informe diario y comando `market`, no en "Nuevo en el
+    mercado"/"Tus pujas pendientes", que salen más seguido y salvarían un pedido caro).
+  - *Techo por puntos* (`bid_ceiling`, "lo quiero sí o sí") — +30% si TOP de liga, capado a 2x
+    el mínimo (con pocas referencias se dispara: un medio de 0.70M dio un techo de 12M) y solo
+    con ≥3 referencias de mercado en su posición (`position_ppm_benchmark`). No sale para
+    "Inversión" (flipeo, no fichaje para el once).
+  Solo aparece si el mayor de los dos supera claramente la puja "con margen" (o el mínimo si
+  no hay margen) — si no, no aporta nada nuevo y no sale el botón.
 - La cantidad viaja en el código del botón: lo que confirmas es exactamente lo que se puja. No
   se ofrece ninguna puja que supere tu saldo (regla del usuario: prohibido quedarse en negativo).
-- `rival_cash` solo está disponible donde ya se pedía (informe diario, comando `market`); en
-  "Nuevo en el mercado" y "Tus pujas pendientes" el colchón se calcula solo con `item.bids`
-  (pedir el historial completo de rivales ahí saldría caro y esos avisos son más frecuentes).
 ```
 botón "b:<id>" → Worker cambia SU fila a [✅ Confirmar · <etiqueta> "B:<id>"] + [❌ Cancelar "N:b:<id>"]
 "B:<id>" → Worker quita esas filas + repository_dispatch(fantasy-action, action="b:<id>")

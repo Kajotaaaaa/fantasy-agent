@@ -370,16 +370,17 @@ class Tests(unittest.TestCase):
         # Una subida que se frena (hoy 0.18%, media de 3 días 1.47%) proyecta con el ritmo de HOY.
         slowing = analysis.bid_plan(8_288_386, 8_288_386, analysis.Trend(0.18, 4.4, 23.0), 3.3, 0.0, False)
         self.assertIsNone(slowing.margin)
-        self.assertEqual(plan.ceiling, 15_000_000)  # 7.5 pts / 0.5 pts-por-M
+        self.assertEqual(plan.max_bid, 15_000_000)  # techo por puntos: 7.5 pts / 0.5 pts-por-M
+        self.assertEqual(plan.max_reason, "ceiling")
         # Sin subida no hay margen que justificar; sin referencia de mercado, ni techo.
         flat = analysis.bid_plan(10_000_000, 10_000_000, analysis.Trend(0, 0, 0), 7.5, 0, False)
-        self.assertEqual((flat.margin, flat.expected, flat.ceiling), (None, None, None))
+        self.assertEqual((flat.margin, flat.expected, flat.max_bid), (None, None, None))
         # Un techo que no supera la puja anterior no aporta nada.
         low = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.74, False)
-        self.assertIsNone(low.ceiling)
+        self.assertIsNone(low.max_bid)
         # Y nunca pasa del doble del mínimo, aunque los puntos "digan" mucho más.
         cheap = analysis.bid_plan(1_000_000, 1_000_000, analysis.Trend(0, 0, 0), 3.5, 0.29, False)
-        self.assertEqual(cheap.ceiling, 2_000_000)
+        self.assertEqual(cheap.max_bid, 2_000_000)
 
     def test_bid_plan_14_days_for_lineup_targets(self):
         # Petición del usuario (2026-09-22): un fichaje para el once se queda contigo 14 días
@@ -404,12 +405,13 @@ class Tests(unittest.TestCase):
         # el colchon; se redondea a miles al alza y nunca pasa del 8%.
         self.assertEqual(analysis.competition_bid(10_000_000, 2, 0), 10_400_000)
         self.assertEqual(analysis.competition_bid(10_000_000, 10, 10), 10_800_000)  # tope 8%
-        # El colchon no aparece si el margen por tendencia ya lo supera de sobra.
+        # El colchon no aparece como "máximo" si el margen por tendencia ya lo supera de sobra.
         rising = analysis.Trend(2.0, 6.0, 12.0)
         plan = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.0, False, existing_bids=1)
-        self.assertIsNone(plan.cushion)  # margen (10.307M) > colchón (10.2M): no repetir botón
+        self.assertIsNone(plan.max_bid)  # margen (10.307M) > colchón (10.2M): no repetir botón
         flat = analysis.bid_plan(10_000_000, 10_000_000, analysis.Trend(0, 0, 0), 7.5, 0.0, False, existing_bids=1)
-        self.assertEqual(flat.cushion, 10_200_000)  # sin margen que lo cubra, sí sale
+        self.assertEqual(flat.max_bid, 10_200_000)  # sin margen que lo cubra, sí sale como "máximo"
+        self.assertEqual(flat.max_reason, "cushion")
 
     def test_buy_sections_one_message_per_player(self):
         # Pedido del usuario (2026-09-22): con varios candidatos, un solo mensaje con todos los
