@@ -358,9 +358,15 @@ def cmd_execute_action(args, s) -> None:
         notify.send_telegram(s, act(api, s, target))
     except Exception as exc:
         # El fallo ya se entrega por Telegram; salir con error solo mandaría además un correo
-        # de "workflow fallido" de GitHub por cada botón que no pudo ejecutarse.
+        # de "workflow fallido" de GitHub por cada botón que no pudo ejecutarse. El Worker ya
+        # quitó el botón de "Confirmar" del mensaje original antes de disparar esto (no sabe si
+        # la acción va a fallar), así que sin un botón nuevo aquí no hay forma de reintentar sin
+        # pedir el aviso de nuevo: se manda uno igual al original (mismo código de acción).
         print(f"[error] {args.action}: {exc}")
-        notify.send_telegram(s, f"❌ {service.b('No se pudo ejecutar')}\n{service.esc(str(exc))}")
+        notify.send_telegram(
+            s, f"❌ {service.b('No se pudo ejecutar')}\n{service.esc(str(exc))}",
+            buttons=service._keyboard([service._action_row("🔁 Reintentar", args.action)]),
+        )
 
 
 def cmd_flip(args, s) -> None:
