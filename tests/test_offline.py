@@ -112,6 +112,20 @@ class Tests(unittest.TestCase):
         # (solo se consigue por cláusula) y no debe salir como oportunidad de mercado.
         self.assertNotIn("NoEsPujable", txt)
 
+    def test_investment_picks_excludes_lineup_targets(self):
+        # Petición del usuario (2026-09-22): el mismo jugador (Chollo) salía en "Mercado para
+        # tu once" Y en "Inversión", con una puja "máxima" distinta para el MISMO anuncio (14
+        # días vs 3 — fichaje vs flipeo). Ya era la regla que aplicaba `flip._buy` para no
+        # comprar y revender a alguien que en realidad querías conservar; ahora vive en
+        # `_investment_picks` para que los informes coincidan con el flipeo real.
+        world = service.build_world(FakeAPI(), self.s)
+        market_names = {item.player.name for item, _, _ in service._market_picks(world)}
+        investment_names = {item.player.name for item, _ in service._investment_picks(world)}
+        self.assertIn("Chollo", market_names)
+        self.assertFalse(market_names & investment_names)
+        self.assertNotIn("Chollo", investment_names)
+        self.assertEqual(service.investment_report(world), "")  # nada que ofrecer, ya está en "el once"
+
     def test_action_buttons(self):
         world = service.build_world(FakeAPI(), self.s)
         codes = lambda kb: [row[0]["callback_data"] for row in kb["inline_keyboard"]] if kb else []  # noqa: E731

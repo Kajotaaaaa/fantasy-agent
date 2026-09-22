@@ -218,10 +218,11 @@ def _buy(api: FantasyAPI, world: service.World, store, s: Settings, now: datetim
     held_cost = sum(h["buy_price"] for h in held.values())
     # Lo que se ofrece como fichaje para tu once lo decides tú a mano (y no hay forma de ver
     # las pujas propias en la API): el flipeo no puja por esos, para no comprar y luego
-    # revender por su cuenta a alguien que querías conservar.
-    lineup_targets = {item.player.id for item, _, _ in service._market_picks(world)}
+    # revender por su cuenta a alguien que querías conservar. El filtro vive en
+    # `service._investment_picks` (así el flipeo real y los informes de "Inversión" siempre
+    # coinciden), aquí solo se piden los picks ya filtrados.
     plan = plan_bids(
-        [(item, tr) for item, tr in service._investment_picks(world, top=10) if item.player.id not in lineup_targets],
+        service._investment_picks(world, top=10),
         world.my_cash,
         held_cost,
         [p["amount"] for p in pending.values()],

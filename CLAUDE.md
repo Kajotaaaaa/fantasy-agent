@@ -121,7 +121,12 @@ estado real vive en la caché de Actions, no en el SQLite local; no ejecutar `wa
   flips abiertos y ≤ 3 pujas nuevas por día; lo pujado nunca supera el saldo (prohibido
   quedarse en negativo). No puja por lo que sale en "Mercado para tu once" (es tu lista de
   fichajes manuales; la API no deja ver tus propias pujas, así que no se puede saber si ya
-  pujaste a mano).
+  pujaste a mano) — este filtro vive DENTRO de `_investment_picks` (2026-09-22, antes lo
+  aplicaba `flip._buy` por su cuenta): el usuario notó que el mismo jugador podía salir en
+  "Mercado para tu once" Y en "Inversión" con una puja "máxima" distinta para el MISMO anuncio
+  (14 días/fichaje vs 3 días/flipeo, números que no cuadraban entre sí). Al mover el filtro al
+  origen de los datos, los informes y el flipeo real siempre coinciden: si algo ya sale como
+  fichaje recomendado, no vuelve a salir como oportunidad de inversión aparte.
 - **Aceptar/rechazar ofertas (resuelto, 2026-09-22).** Primera oferta real vista:
   `{"id", "createdAt", "expirationDate", "isFromMarket": true, "money", "status": "pending",
   "updatedAt"}` — sin campo de usuario: `isFromMarket: true` confirma que son las ofertas que

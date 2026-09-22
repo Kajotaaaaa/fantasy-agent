@@ -289,9 +289,18 @@ def _market_picks(world: World, min_score: float = 8.0) -> list[tuple[models.Mar
 
 
 def _investment_picks(world: World, top: int = 5) -> list[tuple[models.MarketItem, analysis.Trend]]:
+    """Candidatos a flipeo (comprar y revender rápido). Excluye TOP de liga (a esos los quieres
+    para tu once, no para venderlos) y también a cualquiera que ya salga en `_market_picks`
+    (fichaje recomendado para tu once): 2026-09-22, el usuario notó que el mismo jugador podía
+    aparecer en "Mercado para tu once" Y en "Inversión" con una puja "máxima" distinta para el
+    MISMO anuncio (14 días vs 3, fichaje vs flipeo) — confuso, y ya era justo la regla que
+    `flip._buy` aplicaba para no comprar y revender a alguien que en realidad querías conservar
+    (`flip.lineup_targets`); ahora vive aquí para que los informes y el flipeo real coincidan
+    siempre, en vez de que `flip.py` tuviera que repetir el filtro por su cuenta."""
+    lineup_targets = {item.player.id for item, _, _ in _market_picks(world)}
     picks = []
     for item in _biddable(world):
-        if item.player.id in world.league_top_ids:
+        if item.player.id in world.league_top_ids or item.player.id in lineup_targets:
             continue
         trend = world.trends.get(item.player.id, (item.player, analysis.Trend(0, 0, 0)))[1]
         score = analysis.score_investment(item, trend)
