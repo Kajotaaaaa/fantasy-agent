@@ -254,6 +254,25 @@ jornada y si se juega en casa o fuera.
   endpoint de escritura para esto (nunca se ha probado contra la cuenta real, decisión explícita
   del usuario de dejar la ejecución manual en la app por ahora). Nuevo apartado en el informe
   diario (justo después de "⚠️ Riesgo de que te clausulen") y comando suelto `clause-raise`.
+  **Corrección 2026-09-22 (mismo día):** la primera versión apuntaba a dejar la cláusula fuera
+  del alcance de TODOS los rivales conocidos (usando su saldo estimado) — el usuario la corrigió:
+  eso funde la caja en cláusulas de fantasía que ya nadie pagaría. Rediseñado como un ANZUELO:
+  solo actúa si la cláusula está pegada al valor de mercado (`CLAUSE_DANGER_RATIO = 1.08`,
+  no importa el saldo de ningún rival concreto — el peligro es el precio en sí) y la sube solo
+  hasta el mismo tope de "cláusula lógica" que el bot usa para juzgar cláusulas ajenas
+  (`CLAUSE_BAIT_RATIO = 1.2`, igual que `max_ratio` en `clause_alerts`/`clause_verdict`) — sigue
+  siendo un precio creíble que un rival racional pagaría, pero rentable para ti si pica.
+- **Aviso 24h antes de desbloqueo, con anzuelo (2026-09-22, petición del usuario).**
+  `service.own_clause_unlock_candidates`/`ensure_own_unlock_trends`/`own_clause_unlock_alerts`:
+  para cada jugador TUYO cuya cláusula se desbloquea en las próximas 24h, un aviso (una vez por
+  jugador, vía `store.alert_is_new`, disparado en cada `_watch_once`) con la cláusula actual, el
+  valor de mercado de hoy, la PROYECCIÓN de valor a la hora exacta del desbloqueo (según su racha
+  reciente, `analysis.project_value` con `days=horas_restantes/24`, no el valor de hoy — si va
+  subiendo, el anzuelo debe apuntar a donde va a estar) y la recomendación de anzuelo
+  (`analysis.clause_raise_plan` sobre ese valor proyectado). `own_clause_unlock_report` es la
+  misma tarjeta sin marcar el aviso como enviado (comando suelto `clause-bait`, y sección nueva
+  en el informe diario justo después de las alarmas de cláusulas) — para poder consultarlo las
+  veces que haga falta sin "gastar" el aviso automático de la vigilancia.
 
 ## Techo de puja (fichajes para el once, no flipeo)
 `analysis.bid_ceiling` + `service.position_ppm_benchmark`/`bid_ceiling_report` (comando

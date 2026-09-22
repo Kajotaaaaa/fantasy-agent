@@ -704,6 +704,43 @@ class ClauseRaiseTests(unittest.TestCase):
         self.assertEqual(plan.raise_amount, 1_000_000)
         self.assertFalse(plan.reaches_bait_ratio)
 
+    def _slot(self, player_id, market_value, clause, unlock_in_hours):
+        player = models.Player(
+            id=player_id, name="Vulnerable", position_id=4, team="Barcelona", team_id="4",
+            market_value=market_value, points=50, avg_points=6.0, status="ok",
+        )
+        return models.SquadSlot(
+            player=player, owner_team_id="T1", owner_name="Yo", clause=clause,
+            clause_locked_until=NOW + timedelta(hours=unlock_in_hours),
+        )
+
+    def test_unlock_candidates_only_within_24h(self):
+        soon = self._slot("p1", 10_000_000, 10_500_000, 5)
+        far = self._slot("p2", 10_000_000, 10_500_000, 48)
+        world = service.World("L1", "T1", 20_000_000, [], [soon, far], [], [])
+        candidates = service.own_clause_unlock_candidates(world)
+        self.assertEqual([sl.player.id for sl in candidates], ["p1"])
+
+    def test_unlock_report_recommends_bait_for_cheap_clause(self):
+        slot = self._slot("p1", 10_000_000, 10_200_000, 5)
+        world = service.World("L1", "T1", 20_000_000, [], [slot], [], [])
+        text = service.own_clause_unlock_report(world)
+        self.assertIn("Vulnerable", text)
+        self.assertIn("anzuelo", text)
+
+    def test_unlock_report_empty_when_nothing_unlocks_soon(self):
+        world = service.World("L1", "T1", 20_000_000, [], [], [], [])
+        self.assertEqual(service.own_clause_unlock_report(world), "")
+
+    def test_unlock_alerts_fire_once_per_player(self):
+        slot = self._slot("p1", 10_000_000, 10_200_000, 5)
+        world = service.World("L1", "T1", 20_000_000, [], [slot], [], [])
+        store = Store(Path(tempfile.mkdtemp()) / "t.db")
+        first = service.own_clause_unlock_alerts(world, store)
+        second = service.own_clause_unlock_alerts(world, store)
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, [])
+
 
 if __name__ == "__main__":
     unittest.main()

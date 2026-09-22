@@ -1049,6 +1049,84 @@ def clauses_report(
     return messages, alerts
 
 
+def own_clause_unlock_candidates(world: World, hours: int = 24) -> list[models.SquadSlot]:
+    """Jugadores TUYOS cuya cláusula se desbloquea (cualquiera podrá pagarla) en las próximas
+    `hours` horas — el momento de decidir si le subes la cláusula ANTES de que sea tarde."""
+    now = datetime.now(timezone.utc)
+    return [
+        sl for sl in world.my_slots
+        if sl.player.position_id != 5 and sl.clause_locked_until
+        and now < sl.clause_locked_until <= now + timedelta(hours=hours)
+    ]
+
+
+def ensure_own_unlock_trends(api: FantasyAPI, world: World, hours: int = 24) -> None:
+    """Histórico de valor solo para los jugadores de `own_clause_unlock_candidates` — no hace
+    falta pedirlo para toda tu plantilla, solo para a quien le toca el aviso de anzuelo."""
+    for sl in own_clause_unlock_candidates(world, hours):
+        p = sl.player
+        if p.id in world.trends:
+            continue
+        try:
+            hist = models.parse_value_history(api.market_value_history(p.id))
+            world.trends[p.id] = (p, analysis.trend_from_history(hist))
+        except Exception as exc:
+            print(f"[aviso] sin histórico para {p.name}: {exc}")
+
+
+def _unlock_bait_card(sl: models.SquadSlot, world: World, now: datetime) -> str:
+    p = sl.player
+    trend = world.trends.get(p.id, (p, analysis.Trend(0, 0, 0)))[1]
+    hours_left = max((sl.clause_locked_until - now).total_seconds() / 3600, 0)
+    projected = analysis.project_value(p.market_value, trend, days=hours_left / 24) if p.market_value else 0
+    until = analysis.to_madrid(sl.clause_locked_until).strftime("%H:%M:%S")
+    ratio = f"x{sl.clause / p.market_value:.2f}" if p.market_value else "?"
+    lines = [
+        f"{b(p.name)} · se desbloquea a las {b(until)}",
+        f"Cláusula: {b(m(sl.clause))} ({ratio} de mercado) · valor hoy: {m(p.market_value)}",
+    ]
+    if p.market_value and abs(projected - p.market_value) >= p.market_value * 0.01:
+        lines.append(f"Proyección para esa hora: ~{m(projected)} ({analysis.trend_words(trend)})")
+    plan = analysis.clause_raise_plan(sl.clause, projected or p.market_value, world.my_cash or 0)
+    if plan:
+        lines.append(
+            f"💡 Súbela {m(plan.raise_amount)} pagando {b(m(plan.cost))} → queda en {b(m(plan.new_clause))} "
+            f"(anzuelo, ≤{analysis.CLAUSE_BAIT_RATIO}x mercado) · si pica, ganas {m(plan.guaranteed_profit)} de más"
+        )
+    else:
+        lines.append(i("Ya está en un nivel razonable — no hace falta tocarla."))
+    return "\n".join(lines)
+
+
+def own_clause_unlock_alerts(world: World, store) -> list[str]:
+    """Aviso, una vez por jugador, 24h antes de que se desbloquee la cláusula de alguien TUYO:
+    situación actual (cláusula vs. valor de mercado) y recomendación de anzuelo (petición del
+    usuario, 2026-09-22) calculada sobre el valor PROYECTADO a la hora del desbloqueo (según su
+    racha, `analysis.project_value`), no sobre el valor de hoy — si está subiendo, el anzuelo
+    tiene que apuntar a donde va a estar, no a donde está ahora. Usa `analysis.clause_raise_plan`
+    (mismo criterio que el resto del sistema: hasta `CLAUSE_BAIT_RATIO`, nunca fuera de alcance).
+    """
+    now = datetime.now(timezone.utc)
+    notes = []
+    for sl in own_clause_unlock_candidates(world, hours=24):
+        if not store.alert_is_new(f"clausebait:{sl.player.id}", ttl_hours=24):
+            continue
+        notes.append(_unlock_bait_card(sl, world, now))
+    return notes
+
+
+def own_clause_unlock_report(world: World) -> str:
+    """Igual que `own_clause_unlock_alerts` pero sin marcar nada como enviado — para mirar el
+    estado en cualquier momento (comando suelto `clause-bait`) sin gastar el aviso automático."""
+    now = datetime.now(timezone.utc)
+    candidates = own_clause_unlock_candidates(world, hours=24)
+    if not candidates:
+        return ""
+    cards = [_unlock_bait_card(sl, world, now) for sl in candidates]
+    head = f"{b('🔓⏳ Próximos desbloqueos (tuyos)')}\n{i('Próximas 24h — anzuelo recomendado antes de que se libere')}"
+    return head + "\n\n" + "\n\n".join(cards)
+
+
 def ensure_speculative_trends(api: FantasyAPI, world: World, s: Settings) -> None:
     """Igual que `ensure_clause_trends` pero para candidatos especulativos (cláusula cara
     respecto a mercado, pero podría compensar si la racha es fuerte de verdad)."""
@@ -1310,6 +1388,10 @@ def report_sections(
     clause_messages, alerts = clauses_report(world, s, news)
     if alerts:
         sections.extend(clause_messages)
+
+    unlock_bait = own_clause_unlock_report(world)
+    if unlock_bait:
+        sections.append((unlock_bait, None))
 
     if rival_cash:
         theft = clause_theft_report(world, rival_cash)

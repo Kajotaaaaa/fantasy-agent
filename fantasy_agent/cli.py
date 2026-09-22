@@ -430,6 +430,8 @@ def cmd_section(args, s) -> None:
     if args.cmd in ("clauses", "clauses-hot", "report"):
         service.ensure_clause_trends(api, world, s)
         service.ensure_speculative_trends(api, world, s)
+    if args.cmd in ("clause-bait", "report"):
+        service.ensure_own_unlock_trends(api, world)
 
     news_targets = []
     if args.cmd in ("lineup", "report") and getattr(args, "news", False):
@@ -493,6 +495,10 @@ def cmd_section(args, s) -> None:
             or "Ninguna cláusula tuya está pegada al valor de mercado ahora mismo, no hace falta anzuelo.",
             None,
         ),
+        "clause-bait": lambda: (
+            service.own_clause_unlock_report(world) or "Ninguna cláusula tuya se desbloquea en las próximas 24h.",
+            None,
+        ),
         "lineup": lambda: (service.lineup_report(world, news), None),
         "losses": lambda: (service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.", None),
         "sell-candidates": lambda: (
@@ -546,6 +552,13 @@ def _watch_once(store: Store, s) -> str:
     fresh_hot = [a for a in hot_alerts if store.alert_is_new(a.key)]
     for a in fresh_hot:
         notify.send_telegram(s, f"📈 {a.message}", buttons=service._clause_keyboard(a.slot.player.id))
+
+    try:
+        service.ensure_own_unlock_trends(api, world)
+        for note in service.own_clause_unlock_alerts(world, store):
+            notify.send_telegram(s, f"🔓⏳ {service.b('Se desbloquea en 24h')}\n{note}")
+    except Exception as exc:
+        print(f"[anzuelo] error: {exc}")
 
     tx = service.my_transactions(api, world, store)
     if tx:
@@ -692,6 +705,7 @@ def main(argv: list[str] | None = None) -> None:
         ("clauses-hot", "Cláusulas especulativas: caras pero con racha fuerte sostenida"),
         ("clause-risk", "Tus jugadores que algún rival podría pagarte de cláusula (saldo estimado)"),
         ("clause-raise", "Cuánto conviene subir la cláusula de esos jugadores para que no te los roben barato"),
+        ("clause-bait", "Tus cláusulas que se desbloquean en 24h, con recomendación de anzuelo"),
         ("lineup", "Once recomendado"),
         ("losses", "Jugadores tuyos por debajo de lo que pagaste"),
         ("sell-candidates", "Candidatos a vender: tendencia bajando 3 días"),
