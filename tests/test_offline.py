@@ -381,6 +381,20 @@ class Tests(unittest.TestCase):
         cheap = analysis.bid_plan(1_000_000, 1_000_000, analysis.Trend(0, 0, 0), 3.5, 0.29, False)
         self.assertEqual(cheap.ceiling, 2_000_000)
 
+    def test_bid_plan_14_days_for_lineup_targets(self):
+        # Petición del usuario (2026-09-22): un fichaje para el once se queda contigo 14 días
+        # (hasta que se puede revender por cláusula), no 3 — con `days=14` la puja "con margen"
+        # puede ofrecer más sin estar regalando dinero, porque el horizonte real es más largo.
+        rising = analysis.Trend(2.0, 6.0, 12.0)
+        plan_3d = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.5, False)
+        plan_14d = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.5, False, days=14)
+        self.assertEqual(plan_14d.expected, 12_686_661)  # ritmo de 7 días (más estable), no el de 3
+        self.assertEqual(plan_14d.margin, 11_344_000)
+        self.assertGreater(plan_14d.margin, plan_3d.margin)
+        # Igual que a 3 días: sin subida no hay margen que justificar, tampoco a 14.
+        flat = analysis.bid_plan(10_000_000, 10_000_000, analysis.Trend(0, 0, 0), 7.5, 0, False, days=14)
+        self.assertIsNone(flat.margin)
+
     def test_competition_bid_cushion(self):
         # Caso real (2026-09-21): perdimos a Yuri por solo 1M pujando justo el minimo, sin
         # ninguna senal de competencia visible en el propio boton. Sin pujas puestas ni rivales

@@ -470,9 +470,16 @@ juega solo el usuario: el mínimo es barato pero pierde contra cualquiera que po
   (0 pujas, ningún rival con saldo de sobra) NO sale el botón: no hay motivo para regalar
   dinero de más a ciegas. Si el colchón queda por debajo de la puja "con margen", tampoco sale
   (sería un botón redundante y más flojo).
-- 📈 **con margen** = mínimo + la MITAD de la ganancia esperada, solo si sube (d3 > 0) y esa
-  ganancia supera el 2% del mínimo. Ganancia esperada = valor de mercado proyectando el ritmo
-  de 3 días otros 3 (horizonte de flipeo, sin mirar 7 días). Regala solo la mitad del beneficio.
+- 📈 **con margen** = mínimo + la MITAD de la ganancia esperada, si esa ganancia supera el 2%
+  del mínimo. Regala solo la mitad del beneficio. El horizonte de la proyección depende de
+  para qué es la puja (`days` en `bid_plan`, decidido por `with_ceiling` en `_plan_for` — sin
+  parámetro nuevo que sincronizar): **3 días** para "Inversión"/flipeo (ritmo del día más bajo
+  entre hoy y la media de 3 días, sin mirar 7 — una subida que se frena no debe proyectarse con
+  el ritmo de una racha que ya pasó) o **14 días** para "Mercado para tu once"/"Nuevo en el
+  mercado" (`project_value`, ritmo de 7 días más estable — petición del usuario, 2026-09-22:
+  "el fichaje se queda en mi plantilla 14 días hasta que se puede revender por cláusula, el
+  margen disponible debería ser mayor que para un flip de 3 días"). Mismo criterio que ya usa
+  `clause_verdict` para "¿esto se paga solo en 14 días?".
 - 🎯 **techo "lo quiero sí o sí"** = `bid_ceiling` por puntos (+30% si TOP), solo si queda
   claramente por encima de la puja anterior, capado a 2x el mínimo (con pocas referencias salió
   un techo de 12M para un medio de 0.70M) y solo con ≥3 referencias de mercado en su posición

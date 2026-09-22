@@ -329,12 +329,18 @@ def _plan_for(
     """Las cuatro pujas posibles de un anuncio (ver `analysis.bid_plan`). El techo por puntos
     solo tiene sentido para fichajes de tu once, no para flipeo (`with_ceiling=False`). El
     colchón por competencia usa las pujas ya puestas en el anuncio (`item.bids`, siempre
-    disponible) y, si se pasa `rival_cash`, también cuántos rivales llegan al mínimo."""
+    disponible) y, si se pasa `rival_cash`, también cuántos rivales llegan al mínimo.
+    `with_ceiling` también decide el horizonte de la puja "con margen": 14 días (fichaje que se
+    queda en tu plantilla) o 3 (flipeo, revender rápido) — mismo indicador que ya distingue
+    ambos casos, sin parámetro nuevo que sincronizar."""
     p = item.player
     benchmark = position_ppm_benchmark(world, p.position_id, exclude_id=p.id) if with_ceiling else 0.0
     minimum = bid_amount(item)
     rivals = _rivals_can_afford(world, minimum, rival_cash)
-    return analysis.bid_plan(minimum, p.market_value, trend, p.avg_points, benchmark, is_top, item.bids, rivals)
+    days = 14 if with_ceiling else 3
+    return analysis.bid_plan(
+        minimum, p.market_value, trend, p.avg_points, benchmark, is_top, item.bids, rivals, days,
+    )
 
 
 def _rivals_line(world: World, price: int, rival_cash: dict[str, int] | None) -> list[str]:
@@ -351,14 +357,14 @@ def _rivals_line(world: World, price: int, rival_cash: dict[str, int] | None) ->
     return [i(f"👥 Rivales que pueden pujar: ✅ {yes} · ❔ {maybe} · ❌ {no} (seguro · dudoso · no; saldo estimado ±40M)")]
 
 
-def _plan_lines(plan: analysis.BidPlan, num_bids: int = 0) -> list[str]:
+def _plan_lines(plan: analysis.BidPlan, num_bids: int = 0, days: int = 3) -> list[str]:
     lines = []
     if plan.cushion:
         bids_note = f"{num_bids} puja{'s' if num_bids != 1 else ''} ya puestas" if num_bids else "rivales con saldo de sobra"
         lines.append(f"🛡️ Con colchón: {b(m(plan.cushion))} · hay competencia visible ({bids_note}), para no perderlo por poco")
     if plan.margin:
         lines.append(
-            f"📈 Con margen: {b(m(plan.margin))} · se espera ~{m(plan.expected)} en 3 días, "
+            f"📈 Con margen: {b(m(plan.margin))} · se espera ~{m(plan.expected)} en {days} días, "
             "te quedas la mitad de la ganancia"
         )
     if plan.ceiling:
@@ -418,7 +424,7 @@ def _market_card(
         f"💰 Mínimo {b(m(plan.minimum))} · {p.avg_points:.1f} pts/partido",
         i(analysis.trend_words(trend)),
         *_my_bid_line(item),
-        *_plan_lines(plan, item.bids),
+        *_plan_lines(plan, item.bids, days=14),
         *_rivals_line(world, plan.minimum, rival_cash),
     ])
     return text, _keyboard(_bid_rows(world, item, trend, is_top, rival_cash=rival_cash))
@@ -454,7 +460,7 @@ def _investment_card(
         f"💰 Mínimo {b(m(plan.minimum))}",
         i(analysis.trend_words(trend)),
         *_my_bid_line(item),
-        *_plan_lines(plan, item.bids),
+        *_plan_lines(plan, item.bids, days=3),
         *_rivals_line(world, plan.minimum, rival_cash),
     ])
     return text, _keyboard(_bid_rows(world, item, trend, False, with_ceiling=False, rival_cash=rival_cash))
