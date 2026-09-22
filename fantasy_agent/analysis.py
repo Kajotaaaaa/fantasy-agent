@@ -247,6 +247,11 @@ def market_verdict(
         points += 1.0
         reasons.append(f"En racha sostenida: sube {trend.d1:+.1f}% al día, {trend.d3:+.1f}% en 3 días")
     elif trend.recovering:
+        # Bug real (2026-09-22): esta rama no sumaba nada, así que un jugador que ya viene
+        # remontando (venía cayendo, pero el corto plazo ya lo desmiente) puntuaba igual que uno
+        # que sigue en caída libre. Es la señal contraria a `cooling` y merece el mismo peso:
+        # estás comprando barato (el valor aún no ha reflejado la mejora) con el viento a favor.
+        points += 1.0
         reasons.append(f"Venía cayendo pero ya recupera: {trend.d3:+.1f}% en 3 días")
     elif trend.d7 <= -5:
         points -= 0.5

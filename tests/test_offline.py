@@ -358,6 +358,21 @@ class Tests(unittest.TestCase):
         cheap = analysis.bid_plan(1_000_000, 1_000_000, analysis.Trend(0, 0, 0), 3.5, 0.29, False)
         self.assertEqual(cheap.ceiling, 2_000_000)
 
+    def test_market_verdict_recovering_scores_like_sustained_rally(self):
+        # Bug real (2026-09-22): un jugador que venía cayendo pero ya recupera (trend.recovering)
+        # puntuaba igual que uno en caida libre sin más — se quedaba sin el punto extra que sí
+        # llevaba una racha sostenida (d7 >= 5), aunque ambas son señales de "sube ahora mismo".
+        item = models.MarketItem(
+            "L1", models.Player("p1", "Recupera", 3, "Equipo", "t1", 8_000_000, 40, 4.0, "ok"),
+            7_600_000, None, "LaLiga", 0,
+        )
+        recovering = analysis.Trend(1.5, 2.0, -6.0)
+        self.assertTrue(recovering.recovering)
+        sustained = analysis.Trend(1.5, 2.0, 6.0)
+        stars_rec, _, _ = analysis.market_verdict(item, recovering, None, False)
+        stars_sus, _, _ = analysis.market_verdict(item, sustained, None, False)
+        self.assertEqual(stars_rec, stars_sus)
+
     def test_flip_plan(self):
         from fantasy_agent import flip
 
