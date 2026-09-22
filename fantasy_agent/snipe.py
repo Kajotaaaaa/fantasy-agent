@@ -12,8 +12,16 @@ lanza el Worker de Cloudflare (puntual al minuto; el cron de GitHub se retrasa m
 20:50, espera hasta 10 s antes del cierre, lee el mercado y actúa.
 
 `SNIPE_MODE`: `on` baja de verdad; cualquier otra cosa (por defecto `shadow`) solo cuenta lo que
-haría. Además de decidir, toma lecturas a T-30s, T-10s, T-3s, T+15s y T+90s para saber cómo se
-comporta el contador de pujas y a qué hora cierra de verdad la subasta."""
+haría. Además de decidir, toma lecturas a T-60s, T-30s, T-10s, T-3s, T+15s y T+90s para saber
+cómo se comporta el contador de pujas y a qué hora cierra de verdad la subasta.
+
+Mismo trabajo, mismo reloj: en T-60s también dispara la compra de flipeo (`flip.run`, petición
+del usuario 2026-09-22). Antes `_buy` pujaba por la mañana, así que el anuncio enseñaba
+`numberOfBids` todo el día y cualquier rival que lo mirase podía meterse a competir sabiendo
+que había algo interesante ahí; pujando en el último minuto no da tiempo a que nadie reaccione.
+El mundo con tendencias (`service.build_world(..., with_trends=True)`) se construye ANTES de
+entrar en la espera de precisión, con margen de sobra (el cron despierta a las 20:50, 10 min
+antes del cierre) para no comerse ese margen con las llamadas de `market_value_history`."""
 from __future__ import annotations
 
 import os
@@ -22,14 +30,16 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
-from . import analysis, models, notify, service
+from . import analysis, flip, models, notify, service
 from .analysis import b, esc, i
 from .api import BASE, COMP, FantasyAPI
 from .config import Settings
+from .storage import Store
 
 CLOSE_LEAD = timedelta(minutes=2)  # expirationDate (21:02) - 2 min = cierre real (21:00)
+FLIP_BUY_AT = -60  # segundos respecto al cierre: último minuto, sin tiempo a que nadie reaccione
 ACT_AT = -10  # segundos respecto al cierre
-SNAPSHOTS = (-30, ACT_AT, -3, 15, 90)
+SNAPSHOTS = (FLIP_BUY_AT, -30, ACT_AT, -3, 15, 90)
 MAX_WAIT = timedelta(minutes=15)  # si el próximo cierre está más lejos, no hay nada que hacer aún
 
 
@@ -121,14 +131,34 @@ def run(api: FantasyAPI, s: Settings, mode: str, close_in: float | None = None) 
             return ""
         close = closes[0]
 
+    # El mundo con tendencias para el flipeo se construye YA, con margen de sobra antes de
+    # entrar en la espera de precisión: en el minuto final no hay tiempo para las llamadas de
+    # `market_value_history` que hacen falta para puntuar candidatos.
+    flip_world = None
+    flip_store = None
+    if s.flip_mode in ("on", "shadow"):
+        try:
+            flip_world = service.build_world(api, s, with_trends=True)
+            flip_store = Store(s.db_file)
+        except Exception as exc:
+            print(f"[flip] error preparando el mundo para la compra del último minuto: {exc}")
+
     shots: dict[int, list[models.MarketItem]] = {}
     done: list[str] = []
+    flip_notes: list[str] = []
     for off in SNAPSHOTS:
         target = close + timedelta(seconds=off)
         while now() < target:
             time.sleep(min(0.5, max(0.05, (target - now()).total_seconds())))
         items = snapshot()
         shots[off] = items
+        if off == FLIP_BUY_AT and flip_world is not None:
+            try:
+                note = flip.run(api, flip_world, flip_store, s, buy_now=True, today=datetime.now().isoformat())
+                if note:
+                    flip_notes.append(note)
+            except Exception as exc:
+                flip_notes.append(f"❌ error en la compra del último minuto: {esc(str(exc))}")
         if off == ACT_AT:
             for it in items:
                 if it.my_bid_id and it.bids == 1 and is_protected(it, top_ids, skip):
@@ -146,7 +176,12 @@ def run(api: FantasyAPI, s: Settings, mode: str, close_in: float | None = None) 
     tag = "real" if live else "sombra"
     head = f"🎯 {b('Rebaja de último segundo')} ({tag}) · cierre {analysis.to_madrid(close).strftime('%H:%M:%S')}"
     body = done or [i("Nada que bajar: ninguna puja tuya estaba sola por encima del mínimo.")]
-    return "\n".join([head, "", *body, "", *_summary(shots)])
+    result = "\n".join([head, "", *body, "", *_summary(shots)])
+    if flip_notes:
+        # El flipeo ya manda sus propios avisos (puja enviada, sin candidatos...); esto es solo
+        # para que quede constancia en el resumen de que corrió en el último minuto.
+        result += "\n\n" + f"🤖 {b('Flipeo (último minuto)')}: " + " · ".join(flip_notes)
+    return result
 
 
 def send(api: FantasyAPI, s: Settings, mode: str, close_in: float | None = None) -> None:

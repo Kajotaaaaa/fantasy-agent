@@ -96,6 +96,21 @@ más; riesgo = que alguien puje en el último segundo tras la lectura.
   lo creó esa misma tarde y pujó 16M por Yuri, mínimo 15.52M, para probar la rebaja).
 - Prueba local: `python -m fantasy_agent snipe --close-in 40` (cierre ficticio; en sombra).
 
+**Compra de flipeo también en el último minuto (2026-09-22, petición del usuario).** Antes
+`flip._buy` pujaba por la mañana (primer tick tras `REPORT_HOUR`): el anuncio quedaba con
+`numberOfBids` visible TODO EL DÍA, así que cualquier rival que lo mirase podía meterse a
+competir sabiendo que había algo interesante ahí. Ahora `_buy` se dispara desde ESTE mismo
+trabajo (`snipe.py`), a `FLIP_BUY_AT = -60` (el minuto final, no ya los 5 que se habían
+propuesto primero — decisión final del usuario: cuanto menos tiempo visible, mejor), con el
+mismo reloj sincronizado del servidor. El mundo con tendencias
+(`service.build_world(..., with_trends=True)`) se construye ANTES de entrar en la espera de
+precisión (con los ~10 min de margen del cron de las 20:50), para no comerse ese margen con
+las llamadas de `market_value_history` que hacen falta para puntuar candidatos — en el minuto
+final ya no hay tiempo para eso, solo para decidir con lo ya calculado y pujar. El tick normal
+de 30 min (`cmd_tick`) ya NO dispara compras reales (`buy_now` solo con `FLIP_FORCE_BUY`, para
+pruebas manuales); sigue resolviendo pujas pendientes, poniendo a la venta lo ganado y
+aplicando el freno de pérdidas cada 30 min, como antes.
+
 ## Flipeo autónomo (`flip.py`) — la única parte que mueve dinero sin confirmar
 Decisión explícita del usuario (2026-09-21): flipeo autónomo, real desde el primer día, tope del
 25% del saldo. Interruptor `FLIP_MODE` (variable del repositorio en GitHub: Settings > Secrets
@@ -105,10 +120,13 @@ que haría por Telegram, vacío/otro = apagado (por defecto). Para PARAR: ponerl
 estado real vive en la caché de Actions, no en el SQLite local; no ejecutar `watch` local con
 `FLIP_MODE=on` a la vez que el tick de Actions, duplicaría operaciones).
 - Ciclo (estado en el `Store`: `flip_pending:<anuncio>`, `flip_held:<jugador>`): una vez al día
-  (primer tick tras `REPORT_HOUR`, cuando ya hay tendencias) `_buy` puja; cada tick
-  `_resolve_pending` mira si se ganó (el jugador aparece en tu plantilla tras el cierre 21:00)
-  y `_list_held` pone a la venta lo ganado a valor de mercado (1 intento al día, 5 máx). Solo se
-  toca lo que el bot compró: nunca vende algo de tu once por su cuenta.
+  `_buy` puja — **en el ÚLTIMO MINUTO antes del cierre de las 21:00** (2026-09-22, ver "Rebaja
+  de último segundo": disparado desde `snipe.py`, no desde el tick normal, para que el anuncio
+  no enseñe `numberOfBids` todo el día y ningún rival tenga tiempo de meterse a competir al
+  verlo); cada tick de 30 min `_resolve_pending` mira si se ganó (el jugador aparece en tu
+  plantilla tras el cierre 21:00) y `_list_held` pone a la venta lo ganado a valor de mercado
+  (1 intento al día, 5 máx). Solo se toca lo que el bot compró: nunca vende algo de tu once por
+  su cuenta.
 - Reglas de compra (`flip_amount`/`plan_bids`): solo candidatos de `_investment_picks` (suben,
   precio ≤ 105% del valor), que sigan subiendo AHORA (hoy ≥ +0.5% y ≥ la mitad del ritmo diario
   de los 3 últimos días: una subida que se frena no vale) y sin `cooling`. Lección real

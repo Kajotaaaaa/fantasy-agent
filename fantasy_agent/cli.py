@@ -569,7 +569,13 @@ def _watch_once(store: Store, s) -> str:
                 s, f"🤖 {service.b('Flipeo apagado')}\nHas pedido forzar una compra pero FLIP_MODE no está en "
                    f"on (ni shadow): créala en Settings > Secrets and variables > Actions > Variables.",
             )
-        flip_note = flip.run(api, world, store, s, buy_now=daily_due or force_flip, today=today, force=force_flip)
+        # La compra real (`_buy`) ya NO se dispara aquí (petición del usuario, 2026-09-22: pujar
+        # por la mañana deja el anuncio con `numberOfBids` visible todo el día, dando tiempo a
+        # que un rival se meta a competir) — se dispara desde `snipe.py` en el último minuto
+        # antes del cierre. Este tick solo resuelve pujas pendientes, pone a la venta lo ganado
+        # y aplica el freno de pérdidas (dentro de `flip.run`, sin `buy_now`), salvo que se
+        # fuerce a mano con `FLIP_FORCE_BUY` para probarlo.
+        flip_note = flip.run(api, world, store, s, buy_now=force_flip, today=today, force=force_flip)
     except Exception as exc:
         # Un fallo del flipeo no debe tumbar el resto de la vigilancia (cláusulas, informe...).
         print(f"[flip] error: {exc}")

@@ -5,7 +5,13 @@ tope y reglas fijas). Interruptor: `FLIP_MODE` = `on` (ejecuta), `shadow` (solo 
 haría, no toca nada) o cualquier otra cosa / vacío (apagado, el valor por defecto).
 
 Ciclo de un flip, con el estado en el `Store` (sobrevive entre vigilancias):
-  1. `_buy` (una vez al día): puja por los mejores candidatos de inversión -> `flip_pending:<anuncio>`.
+  1. `_buy` (una vez al día, en el ÚLTIMO MINUTO antes del cierre de las 21:00 — 2026-09-22,
+     petición del usuario: si pujas por la mañana, el anuncio enseña `numberOfBids` todo el día
+     y cualquier rival que lo vea puede meterse a competir sabiendo que hay algo interesante
+     ahí; pujando el último minuto no da tiempo a que nadie reaccione). Lo dispara `snipe.py`
+     desde el mismo trabajo de la rebaja de último segundo (mismo reloj sincronizado del
+     servidor), no el tick normal de 30 min. Puja por los mejores candidatos de inversión ->
+     `flip_pending:<anuncio>`.
   2. `_resolve_pending` (cada vigilancia): tras el cierre del mercado (21:00) la puja se ha
      ganado (el jugador aparece en tu plantilla -> `flip_held:<jugador>`) o se ha perdido.
   3. `_list_held` (cada vigilancia): pone a la venta lo ganado a valor de mercado.
