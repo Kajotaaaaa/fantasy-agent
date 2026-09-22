@@ -293,7 +293,43 @@ def _act_update_bid(api, s, target: str) -> str:
     )
 
 
-_ACTIONS = {"c": _act_clause, "b": _act_bid, "s": _act_sell, "w": _act_withdraw, "u": _act_update_bid}
+def _act_accept_offer(api, s, target: str) -> str:
+    """Acepta una oferta ("<jugador>:<oferta>:<importe>"). Antes de llamar a la API comprueba
+    que el jugador sigue en venta (la oferta pudo resolverse sola, expirar, o ya haberse
+    aceptado/rechazado desde otro sitio entre el aviso y la pulsación) y que la plantilla sin
+    él sigue pudiendo alinear un once legal (regla del usuario: nunca quedarse corto de
+    cuerpos para la jornada)."""
+    player_id, offer_id, raw_amount = (target.split(":") + ["", "", ""])[:3]
+    amount = int(raw_amount)
+    world = service.build_world(api, s, with_trends=False)
+    slot = next((sl for sl in world.my_slots if sl.player.id == player_id), None)
+    if not slot:
+        raise RuntimeError("Ese jugador ya no está en tu plantilla.")
+    item = next((x for x in service._my_listings(world) if x.player.id == player_id), None)
+    if not item:
+        raise RuntimeError("Ese jugador ya no está en venta (puede que la oferta ya se resolviera).")
+    if not analysis.squad_can_field_eleven(world.my_slots, exclude_player_id=player_id):
+        raise RuntimeError("Vender a este jugador te deja sin cuerpos para alinear un once legal: no lo acepto.")
+    api.accept_offer(world.league_id, item.listing_id, offer_id, amount)
+    return f"✅ {service.b('Oferta aceptada')}\n{service.b(slot.player.name)} vendido por {service.m(amount)}"
+
+
+def _act_reject_offer(api, s, target: str) -> str:
+    """Rechaza una oferta ("<jugador>:<oferta>"). El jugador sigue a la venta después."""
+    player_id, offer_id = (target.split(":") + ["", ""])[:2]
+    world = service.build_world(api, s, with_trends=False)
+    slot = next((sl for sl in world.my_slots if sl.player.id == player_id), None)
+    item = next((x for x in service._my_listings(world) if x.player.id == player_id), None)
+    if not slot or not item:
+        raise RuntimeError("Ese jugador ya no está en venta (puede que la oferta ya se resolviera).")
+    api.reject_offer(world.league_id, item.listing_id, offer_id)
+    return f"✅ {service.b('Oferta rechazada')}\n{service.b(slot.player.name)} sigue a la venta."
+
+
+_ACTIONS = {
+    "c": _act_clause, "b": _act_bid, "s": _act_sell, "w": _act_withdraw, "u": _act_update_bid,
+    "o": _act_accept_offer, "r": _act_reject_offer,
+}
 
 
 def cmd_execute_action(args, s) -> None:

@@ -323,9 +323,11 @@ def _apply_breaker(store, s: Settings, now: datetime) -> list[str]:
 
 
 def watch_offers(api: FantasyAPI, world: service.World, store, s: Settings) -> list[str]:
-    """SOLO LECTURA: cada oferta nueva de la liga por un jugador tuyo puesto a la venta se manda
-    por Telegram con su JSON crudo (para ver por fin el formato real) y, si se reconoce el
-    importe y es un flip, lo que diría `analysis.flip_decision`. No acepta ni rechaza nada."""
+    """Cada oferta nueva de la liga por un jugador tuyo puesto a la venta se manda por Telegram
+    con su JSON crudo, lo que diría `analysis.flip_decision` si se reconoce el importe, y
+    botones de "✅ Aceptar" / "❌ Rechazar" (con la confirmación de dos pasos del Worker de
+    Telegram: nunca se ejecuta nada desde aquí, solo se arma el botón). Sin `id` de oferta
+    reconocido no hay botón de aceptar/rechazar (no hay con qué llamar a la API)."""
     listed = {it.player.id for it in service._my_listings(world)}
     held = _load(store, "flip_held:")
     out = []
@@ -347,6 +349,7 @@ def watch_offers(api: FantasyAPI, world: service.World, store, s: Settings) -> l
                 continue
             store.set(key, "1")
             amount = models.to_int(models.pick(offer, "money", "offerMoney", "amount", "price", "salePrice", default=0))
+            offer_id = str(models.pick(offer, "id", "offerId", default="") or "")
             lines = [f"📨 {b('Oferta recibida')} por {b(slot.player.name)}"]
             if amount:
                 lines.append(f"Importe: {b(service.m(amount))}")
@@ -358,6 +361,12 @@ def watch_offers(api: FantasyAPI, world: service.World, store, s: Settings) -> l
                     verb = "aceptar" if decision == "accept" else "esperar"
                     lines.append(f"Mi regla: {b(verb)} — {esc(why)} (lo pagaste {service.m(buy)})")
             lines.append(f"<code>{esc(raw[:600])}</code>")
-            notify.send_telegram(s, "\n".join(lines))
+            keyboard = None
+            if offer_id.isdigit() and amount:
+                keyboard = service._keyboard([
+                    service._action_row(f"✅ Aceptar {service.m(amount)}", f"o:{slot.player.id}:{offer_id}:{amount}"),
+                    service._action_row("❌ Rechazar", f"r:{slot.player.id}:{offer_id}"),
+                ])
+            notify.send_telegram(s, "\n".join(lines), buttons=keyboard)
             out.append(f"oferta {slot.player.name}")
     return out

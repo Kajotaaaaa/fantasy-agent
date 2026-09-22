@@ -122,13 +122,21 @@ estado real vive en la caché de Actions, no en el SQLite local; no ejecutar `wa
   quedarse en negativo). No puja por lo que sale en "Mercado para tu once" (es tu lista de
   fichajes manuales; la API no deja ver tus propias pujas, así que no se puede saber si ya
   pujaste a mano).
-- **PENDIENTE (bloqueante): aceptar/rechazar ofertas.** Nunca se ha visto una oferta real
-  (`player_offers`/`accept_offer` sin verificar). Hasta verificarlo con la primera oferta real
-  el bot NO acepta nada: las ofertas las decides tú. `flip.watch_offers` (SOLO LECTURA, en cada
-  tick, con o sin FLIP_MODE) manda por Telegram cada oferta nueva de un jugador tuyo en venta
-  con su JSON crudo (`<code>`) y lo que diría `analysis.flip_decision`: así el formato real
-  llega solo, sin tener que pedir nada. Al implementar la aceptación usar `flip_decision` +
-  `squad_can_field_eleven` (reglas del usuario más abajo) y verificar el formato antes.
+- **Aceptar/rechazar ofertas (resuelto, 2026-09-22).** Primera oferta real vista:
+  `{"id", "createdAt", "expirationDate", "isFromMarket": true, "money", "status": "pending",
+  "updatedAt"}` — sin campo de usuario: `isFromMarket: true` confirma que son las ofertas que
+  genera el propio juego (±5% del valor, cada ciclo de las 21:00), no pujas de otro manager.
+  El importe se parsea de `money` (antes ya cubierto por `models.pick`); el `market_id` que
+  piden `accept_offer`/`reject_offer` NO viaja en la oferta, se resuelve aparte con
+  `service._my_listings` por `player_id` (igual que `_act_sell`/`_act_withdraw`). `flip.watch_offers`
+  (en cada tick, con o sin FLIP_MODE) manda por Telegram cada oferta nueva con su JSON crudo,
+  lo que diría `analysis.flip_decision`, y botones "✅ Aceptar"/"❌ Rechazar" con la confirmación
+  de dos pasos del Worker (verbos `o` "<jugador>:<oferta>:<importe>" y `r` "<jugador>:<oferta>"
+  en `PAYLOADS`, `_act_accept_offer`/`_act_reject_offer` en `cli.py`). Nunca autoejecuta: el
+  bot solo arma el botón, la decisión (aceptar/esperar/rechazar) la toma el usuario. Antes de
+  aceptar, `_act_accept_offer` comprueba que el jugador sigue en venta (la oferta pudo
+  resolverse sola entre el aviso y la pulsación) y `squad_can_field_eleven` (no quedarse corto
+  de cuerpos para la jornada).
 - **Libro de resultados y freno.** Cuando un flip sale de tu plantilla (`_list_held`), se anota
   en `flip_result:*` lo que costó y lo que se cobró (venta a LaLiga tipo 33 o cláusula cobrada
   tipo 1 del historial) y se manda "Flip cerrado" con el resultado. `breaker_reason` PAUSA LA
@@ -167,10 +175,10 @@ plantilla sin ese jugador sigue pudiendo alinear un once legal (cuerpos disponib
 posición, no calidad) — la regla de "nunca quedarse corto para la jornada" que pidió el
 usuario. `buy_date:<id>` en `kv` (junto a `buy_price:<id>`, ambos puestos/borrados a la vez
 por `my_transactions`) da los días transcurridos para esta lógica.
-Pendiente: conectar esto con `accept`/`reject` reales — falta ver una oferta real (campos
-`offerId`/`marketId`/importe) para terminar el parseo (`api.player_offers`, forma sin
-verificar). Autonomía acordada: SIEMPRE confirmación del usuario por operación, nunca
-autoejecutar pujas/ventas de este flujo sin preguntar primero.
+Conectado con `accept`/`reject` reales (ver más arriba, sección "Aceptar/rechazar ofertas").
+Autonomía acordada: SIEMPRE confirmación del usuario por operación, nunca autoejecutar
+pujas/ventas de este flujo sin preguntar primero — los botones de oferta llevan la
+confirmación de dos pasos del Worker, igual que el resto.
 
 ## Cuándo vender: tendencia, no cuánto has perdido ya
 `analysis.sell_candidates`/`service.sell_candidates_report` (comando `sell-candidates`, y en
@@ -224,10 +232,15 @@ contra la liga real de producción:
 - **Retirar del mercado**: `DELETE /league/{league_id}/market/{market_id}/delete`, sin body.
   Verificado.
 - **Leer ofertas pendientes**: `GET /league/{league_id}/playerTeam/{playerTeamId}/offer`
-  (solo lectura). Forma de la respuesta SIN verificar todavía (nunca hemos visto una oferta
-  real) — probar contra un jugador puesto a la venta antes de fiarse del parseo.
+  (solo lectura). Forma verificada contra una oferta real (2026-09-22, ver sección "Aceptar/
+  rechazar ofertas" más arriba): `{id, createdAt, expirationDate, isFromMarket, money, status,
+  updatedAt}`, sin `market_id` propio.
 - **Aceptar/rechazar oferta**: `POST .../market/{market_id}/offer/{offer_id}/accept` (body
-  `{"offerMoney": cantidad}`) / `.../reject` (sin body). SIN verificar todavía.
+  `{"offerMoney": cantidad}`) / `.../reject` (sin body). El `market_id` se saca de
+  `service._my_listings`, no de la oferta. Llamadas SIN confirmar todavía contra la cuenta
+  real (aceptar es irreversible): la primera vez que se pulse el botón, revisar la respuesta
+  del servidor (log de `execute-action` en GitHub Actions) por si el formato del body no era
+  el esperado.
 - Todas estas viven en `api.py` bajo `_write()` (sin reintentos — reintentar una escritura
   financiera tras un timeout podría duplicarla) y tienen su comando de prueba en `cli.py`
   (`bid`, `clause`, `sell`, `withdraw`, `offers`) con vista previa por defecto y `--confirm`
@@ -389,8 +402,8 @@ de la versión premium del juego y esta liga no la tiene — se eliminó por com
 tip relacionado en `STRATEGY_TIPS`). Si algún día hay premium de por medio, revisar el
 historial de git antes de reconstruirlo desde cero.
 
-## Botones de Telegram (cláusula, puja, venta, retirada) — webhook en tiempo real
-Elegido por el usuario: webhook (no sondeo). Cuatro acciones, código `<verbo>:<id>`:
+## Botones de Telegram (cláusula, puja, venta, retirada, ofertas) — webhook en tiempo real
+Elegido por el usuario: webhook (no sondeo). Código `<verbo>:<id>`:
 | código | botón | dónde sale | qué ejecuta `cli._act_*` |
 |---|---|---|---|
 | `c:<player_id>` | 💳 Pagar cláusula | alerta de cláusula pagable ya (`open_affordable`) y todas las especulativas | relee la plantilla del rival SIN caché y paga con `playerTeamId` |
@@ -398,6 +411,8 @@ Elegido por el usuario: webhook (no sondeo). Cuatro acciones, código `<verbo>:<
 | `s:<player_id>` | 📤 Vender <nombre> <valor> | "Candidatos a vender" (tendencia a la baja) salvo los que ya están en venta | pone a la venta a valor de mercado |
 | `u:<anuncio>:<puja>:<cantidad>` | ✏️ Cambiar puja (solo si ya tienes una pendiente ahí) | "📌 Tus pujas pendientes" (`my_bids_report`, comando `bids`, también en el informe diario) y las tarjetas de compra | `api.update_bid` (PUT, cuerpo sin verificar); comprueba que la puja sigue pendiente y los mismos topes que `b` |
 | `w:<player_id>` | ↩️ Retirar <nombre> | "En venta ahora" (`my_listings_report`, comando `listings`) | retira el anuncio |
+| `o:<player_id>:<offer_id>:<importe>` | ✅ Aceptar <importe> | "📨 Oferta recibida" (`flip.watch_offers`, cada tick) | comprueba que sigue en venta y que la plantilla sin él alinea un once legal (`squad_can_field_eleven`), luego `api.accept_offer` con el `market_id` resuelto por `service._my_listings` |
+| `r:<player_id>:<offer_id>` | ❌ Rechazar | "📨 Oferta recibida" (`flip.watch_offers`, cada tick) | comprueba que sigue en venta y `api.reject_offer`; el jugador sigue a la venta |
 
 Los avisos "se libera en Xh" no llevan botón (aún no se puede pagar).
 
@@ -428,7 +443,10 @@ botón "b:<id>" → Worker cambia SU fila a [✅ Confirmar · <etiqueta> "B:<id>
   venta ahora" (botones de retirar, solo si tienes a alguien en venta).
 - Pendientes de verificar en real: pujar y vender por botón usan los mismos endpoints ya
   verificados con `bid`/`sell`/`withdraw`, pero el circuito completo por botón solo se ha
-  probado con `c:` y un id inexistente.
+  probado con `c:` y un id inexistente. `o`/`r` (aceptar/rechazar oferta) son NUEVOS: el
+  circuito de botón entero (Worker → `execute-action` → `accept_offer`/`reject_offer`) no se
+  ha probado todavía contra una oferta real — la próxima que llegue es la primera prueba de
+  verdad, mirar la respuesta del servidor con atención la primera vez.
 - El doble paso "¿Seguro?" vive en el Worker (`worker/telegram-webhook.js`); `execute-action` NO
   tiene vista previa, por eso no debe lanzarse a mano sin saber qué código pasas.
 - Worker: solo atiende el `TELEGRAM_CHAT_ID` configurado, exige la cabecera secreta que Telegram

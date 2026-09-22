@@ -178,11 +178,11 @@ class Tests(unittest.TestCase):
 
         class OfferAPI(FakeAPI):
             def player_offers(self, lid, player_team_id):
-                return [{"id": "O1", "money": 8_500_000}] if player_team_id == "pt-me3" else []
+                return [{"id": "555", "money": 8_500_000, "isFromMarket": True}] if player_team_id == "pt-me3" else []
 
         sent = []
         original = flip.notify.send_telegram
-        flip.notify.send_telegram = lambda settings, text, buttons=None: sent.append(text)
+        flip.notify.send_telegram = lambda settings, text, buttons=None: sent.append((text, buttons))
         try:
             world = service.build_world(OfferAPI(), self.s)
             store = Store(Path(tempfile.mkdtemp()) / "o.sqlite3")
@@ -192,10 +192,39 @@ class Tests(unittest.TestCase):
         finally:
             flip.notify.send_telegram = original
         self.assertEqual(len(sent), 1)
-        self.assertIn("Oferta recibida", sent[0])
-        self.assertIn("8.50M", sent[0])
-        self.assertIn("aceptar", sent[0])  # beneficio sobre lo pagado (8.0M -> 8.5M)
-        self.assertIn("O1", sent[0])  # el JSON crudo va incluido
+        text, buttons = sent[0]
+        self.assertIn("aceptar", text)  # con beneficio, la regla dice aceptar
+        rows = buttons["inline_keyboard"]
+        self.assertEqual([r[0]["callback_data"] for r in rows], ["o:me3:555:8500000", "r:me3:555"])
+
+    def test_accept_reject_offer_actions(self):
+        from fantasy_agent import cli
+
+        calls = []
+
+        class WriteAPI(FakeAPI):
+            def accept_offer(self, lid, market_id, offer_id, amount):
+                calls.append(("accept", lid, market_id, offer_id, amount))
+                return {"status": "ok"}
+
+            def reject_offer(self, lid, market_id, offer_id):
+                calls.append(("reject", lid, market_id, offer_id))
+                return {"status": "ok"}
+
+        api = WriteAPI()
+        msg = cli._act_accept_offer(api, self.s, "me3:555:8500000")
+        self.assertIn("Oferta aceptada", msg)
+        self.assertEqual(calls, [("accept", "L1", "L200", "555", 8_500_000)])
+
+        calls.clear()
+        msg = cli._act_reject_offer(api, self.s, "me3:555")
+        self.assertIn("Oferta rechazada", msg)
+        self.assertEqual(calls, [("reject", "L1", "L200", "555")])
+
+        # Un jugador que ya no está en venta (no aparece en el mercado con "sellerTeam": "Yo"):
+        # no hay `market_id` con el que llamar a la API, así que no acepta nada.
+        with self.assertRaises(RuntimeError):
+            cli._act_accept_offer(api, self.s, "me1:555:9000000")
 
     def test_clause_arm_buttons_and_fire_time(self):
         from dataclasses import replace as dc_replace
