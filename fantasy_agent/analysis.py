@@ -1050,10 +1050,12 @@ CLAUSE_BAIT_RATIO = 1.2
 # fuerte) el anzuelo se calcula sobre dónde estará dentro de este plazo, no sobre el valor en el
 # momento exacto del desbloqueo (petición del usuario, 2026-09-22). 14 días (el horizonte de
 # "Oportunidades de inversión") resultó demasiado agresivo como primer paso — extrapola una
-# racha corta demasiado lejos y obliga a una inversión grande de golpe (petición del usuario,
-# 2026-09-23): mejor un plazo corto y, si la racha se confirma, `clause_raise_followups` avisa
-# para volver a subirla, en vez de apostarlo todo a la primera.
-CLAUSE_BAIT_HORIZON_DAYS = 3
+# racha corta demasiado lejos y obliga a una inversión grande de golpe. 3 días se quedó corto en
+# el otro sentido (petición del usuario, 2026-09-23): si la racha es de verdad, cualquier rival
+# ve venir la subida y pagaría igual una cláusula algo más alta ya de entrada — 7 días, para que
+# se lo piensen, y si la racha se confirma, `clause_raise_followups` avisa para volver a subirla
+# en vez de apostarlo todo a la primera.
+CLAUSE_BAIT_HORIZON_DAYS = 7
 CLAUSE_DANGER_RATIO = 1.08
 
 
