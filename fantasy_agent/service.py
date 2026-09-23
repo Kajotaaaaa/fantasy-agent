@@ -510,11 +510,15 @@ def buy_sections(world: World, min_score: float = 8.0, rival_cash: dict[str, int
     sections: list[tuple[str, dict | None]] = []
     picks = _market_picks(world, min_score)
     head = f"{b('🛒 Mercado para tu once')}\n{i('Saldo disponible: ' + m(world.my_cash))}"
+    if not picks:
+        sections.append((f"{head}\n\n{i('Nada que llegue a la nota mínima hoy.')}", None))
     for idx, (item, trend, is_top) in enumerate(picks):
         text, kb = _market_card(world, item, trend, is_top, rival_cash)
         sections.append((f"{head}\n\n{text}" if idx == 0 else text, kb))
     inv_picks = _investment_picks(world)
     head2 = f"{b('💹 Oportunidades de inversión')}\n{i('Comprar y revender, no para tu once')}"
+    if not inv_picks:
+        sections.append((f"{head2}\n\n{i('Nada que compense comprar y revender hoy.')}", None))
     for idx, (item, trend) in enumerate(inv_picks):
         text, kb = _investment_card(world, item, trend, rival_cash)
         sections.append((f"{head2}\n\n{text}" if idx == 0 else text, kb))
