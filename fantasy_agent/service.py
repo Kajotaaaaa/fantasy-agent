@@ -593,10 +593,10 @@ def market_arrivals_report(world: World, store) -> tuple[str, dict | None]:
 
 def current_offers(api: FantasyAPI, world: World) -> dict[str, tuple[int, str]]:
     """Mejor oferta pendiente ahora mismo por cada jugador tuyo puesto a la venta: (importe, id
-    de oferta). Un jugador en bajada o en venta no sirve de nada si no ves también lo que te
-    ofrecen y no puedes aceptarlo desde ahí mismo — de eso vive esta función: se llama una vez
-    por informe y se reparte a `losing_positions_report`, `sell_candidates_report`,
-    `sell_keyboard` y `my_listings_report` para que todos hablen de la misma oferta."""
+    de oferta). Solo se usa en `my_listings_report` ("En venta ahora"): es el único sitio donde
+    ya se ve el precio que pides, así que es el único donde la oferta y el botón de aceptarla
+    tienen contexto — en cualquier otro informe (pérdidas, tendencia) saldría un botón de
+    aceptar sin explicar de dónde sale ese dinero (regla del usuario, 2026-09-23)."""
     listed = {item.player.id for item in _my_listings(world)}
     out: dict[str, tuple[int, str]] = {}
     for slot in world.my_slots:
@@ -620,11 +620,6 @@ def current_offers(api: FantasyAPI, world: World) -> dict[str, tuple[int, str]]:
     return out
 
 
-def _offer_line(p: models.Player, offers: dict[str, tuple[int, str]] | None) -> str:
-    offer = (offers or {}).get(p.id)
-    return f"\n{i(f'📨 Te ofrecen ahora: {m(offer[0])}')}" if offer else ""
-
-
 def _offer_row(p: models.Player, offers: dict[str, tuple[int, str]] | None) -> list[list[dict]]:
     offer = (offers or {}).get(p.id)
     if not offer:
@@ -633,12 +628,10 @@ def _offer_row(p: models.Player, offers: dict[str, tuple[int, str]] | None) -> l
     return [_action_row(f"✅ Aceptar {m(amount)} por {p.name}", f"o:{p.id}:{offer_id}:{amount}")]
 
 
-def losing_positions_report(world: World, store, offers: dict[str, tuple[int, str]] | None = None) -> str:
+def losing_positions_report(world: World, store) -> str:
     """Jugadores tuyos por debajo de lo que pagaste (precio de compra real, no tendencia de
     mercado sin más) — usa el histórico de `my_transactions`, así que solo cubre lo comprado
-    desde que ese seguimiento arrancó. `offers` (ver `current_offers`): si alguno tiene una
-    oferta puesta ahora, se ve el valor de mercado Y lo que te ofrecen juntos, en la misma
-    línea que la pérdida — antes solo salía el dato de la pérdida, sin la oferta."""
+    desde que ese seguimiento arrancó."""
     buy_prices = {pid: int(v) for pid, v in store.prefixed("buy_price:").items()}
     trends = {pid: t for pid, (_, t) in world.trends.items()}
     candidates = analysis.loss_cut_candidates(world.my_slots, buy_prices, trends)
@@ -650,7 +643,6 @@ def losing_positions_report(world: World, store, offers: dict[str, tuple[int, st
         cards.append(
             f"{b(p.name)} · {m(buy)} → {m(p.market_value)} · "
             f"{i(f'-{loss_pct:.0f}% ({m(buy - p.market_value)})')}"
-            f"{_offer_line(p, offers)}"
         )
     return f"{b('🔻 Corta pérdidas')}\n{i('Por debajo de lo que pagaste')}\n\n" + "\n".join(cards)
 
@@ -667,11 +659,10 @@ def _sell_candidates(world: World, store) -> tuple[list[models.SquadSlot], dict[
     return analysis.sell_candidates(world.my_slots, buy_prices, trends), buy_prices, trends
 
 
-def sell_candidates_report(world: World, store, offers: dict[str, tuple[int, str]] | None = None) -> str:
+def sell_candidates_report(world: World, store) -> str:
     """Candidatos a poner a la venta según tendencia (ver `analysis.sell_candidates`): lleva
     bajando 3 días, sea cual sea la pérdida acumulada. Los que ya están en venta se marcan
-    (siguen cumpliendo la regla, pero no hay nada que hacer con ellos). `offers`: ver
-    `current_offers` — si hay una oferta puesta, se ve junto al valor de mercado."""
+    (siguen cumpliendo la regla, pero no hay nada que hacer con ellos)."""
     candidates, buy_prices, trends = _sell_candidates(world, store)
     if not candidates:
         return ""
@@ -686,41 +677,20 @@ def sell_candidates_report(world: World, store, offers: dict[str, tuple[int, str
         cards.append(
             f"{b(p.name)} · {m(buy)} → {m(p.market_value)} ({diff_pct:+.0f}%) · "
             f"{i(analysis.trend_words(trend))}{status}"
-            f"{_offer_line(p, offers)}"
         )
     head = f"{b('📉 Candidatos a vender')}\n{i('Tendencia bajando 3 días — no esperar a que caiga más')}"
     return head + "\n\n" + "\n".join(cards)
 
 
-def offers_keyboard(world: World, offers: dict[str, tuple[int, str]] | None = None) -> dict | None:
-    """Botón de aceptar por cada jugador tuyo con una oferta puesta ahora mismo (`offers`, ver
-    `current_offers`), sin importar si además es candidato a vender o a corta-pérdidas: la
-    oferta se puede aceptar igual, así que siempre lleva su botón."""
-    if not offers:
-        return None
-    rows: list[list[dict]] = []
-    for slot in world.my_slots:
-        rows += _offer_row(slot.player, offers)
-    return _keyboard(rows)
-
-
-def sell_keyboard(world: World, store, offers: dict[str, tuple[int, str]] | None = None) -> dict | None:
-    """Botón de vender (a valor de mercado) para cada candidato que aún no está en venta, más un
-    botón de aceptar por cada jugador con una oferta puesta ahora mismo (`offers`, ver
-    `current_offers`) — cubre tanto a los candidatos de esta lista como a los de corta-pérdidas,
-    para no dejar la oferta sin botón solo por no encajar también en `sell_candidates`."""
+def sell_keyboard(world: World, store) -> dict | None:
+    """Botón de vender (a valor de mercado) para cada candidato que aún no está en venta."""
     candidates, _, _ = _sell_candidates(world, store)
     listed = {item.player.id for item in _my_listings(world)}
-    candidate_ids = {sl.player.id for sl in candidates}
-    rows: list[list[dict]] = []
-    for sl in candidates:
-        if sl.player.id not in listed and sl.player_team_id and sl.player.market_value:
-            rows.append(_action_row(f"📤 Vender {sl.player.name} {m(sl.player.market_value)}", f"s:{sl.player.id}"))
-        rows += _offer_row(sl.player, offers)
-    for slot in world.my_slots:  # ofertas de jugadores con oferta que no son candidatos a vender
-        if slot.player.id not in candidate_ids:
-            rows += _offer_row(slot.player, offers)
-    return _keyboard(rows)
+    return _keyboard([
+        _action_row(f"📤 Vender {sl.player.name} {m(sl.player.market_value)}", f"s:{sl.player.id}")
+        for sl in candidates
+        if sl.player.id not in listed and sl.player_team_id and sl.player.market_value
+    ])
 
 
 def offers_watch_report(world: World, store=None) -> tuple[str, dict | None]:
@@ -808,22 +778,37 @@ def my_bids_report(world: World) -> tuple[str, dict | None]:
     return head + "\n\n" + "\n".join(cards), _keyboard(rows)
 
 
-def my_listings_report(world: World, offers: dict[str, tuple[int, str]] | None = None) -> tuple[str, dict | None]:
+def my_listings_report(
+    world: World, offers: dict[str, tuple[int, str]] | None = None, store=None,
+) -> tuple[str, dict | None]:
     """Tus jugadores puestos a la venta ahora, cada uno con su botón de retirarlo. `offers` (ver
     `current_offers`): si alguno tiene una oferta puesta, se ve el precio que pides Y lo que te
     ofrecen en líneas propias, con botón para aceptarla ahí mismo; si no, se dice que aún no ha
-    llegado ninguna, para no dejarlo en el aire."""
+    llegado ninguna, para no dejarlo en el aire. `store` (opcional): con el precio de compra
+    guardado, la oferta también dice la ganancia o pérdida neta que te dejaría aceptarla."""
     listings = _my_listings(world)
     if not listings:
         return "", None
+    buy_prices = {pid: int(v) for pid, v in store.prefixed("buy_price:").items()} if store is not None else {}
     cards = []
     for item in listings:
         offer = (offers or {}).get(item.player.id)
         if offer:
+            amount = offer[0]
+            gain_line = ""
+            buy = buy_prices.get(item.player.id)
+            if buy:
+                gain = amount - buy
+                pct = gain / buy * 100
+                verb = "Ganancia" if gain >= 0 else "Pérdida"
+                gain_line = f"\n{i(f'Lo pagaste: {m(buy)} · {verb} neta: {m(gain)} ({pct:+.0f}%)')}"
+            elif store is not None:
+                gain_line = f"\n{i('No sé lo que pagaste por él (de antes de que el bot lo siguiera): no puedo calcular la ganancia.')}"
             cards.append(
                 f"{b(item.player.name)} ·\n"
                 f"📨 pides {b(m(item.price))}\n"
-                f"📨 Te ofrecen ahora: {b(m(offer[0]))}"
+                f"📨 Te ofrecen ahora: {b(m(amount))}"
+                f"{gain_line}"
             )
         else:
             cards.append(f"{b(item.player.name)} · pides {b(m(item.price))}\n{i('No ha llegado la oferta aún')}")
@@ -969,6 +954,47 @@ def audit_my_cash(api: FantasyAPI, world: World, store) -> str:
     return (
         f"🔎 {b('Auditoría del saldo')}\n{esc(what)}\n"
         f"El saldo cambió {m(actual)}; el historial decía {m(predicted)}.\n{verdict}"
+    )
+
+
+def daily_cash_summary_report(api: FantasyAPI, world: World) -> str:
+    """Solo lo de HOY: cuánto has ganado (ventas y cláusulas que te han pagado) y cuánto has
+    invertido (compras y cláusulas que has pagado tú), con el neto en positivo o negativo — para
+    ver de un vistazo si el día sale a cuenta, sin leer el historial completo ni compararlo con
+    nada (eso ya lo hace `audit_my_cash`, que es otra cosa: detecta descuadres del saldo)."""
+    my_id = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), None)
+    if not my_id:
+        return ""
+    today = analysis.to_madrid(datetime.now(timezone.utc)).date()
+    events: list[models.Activity] = []
+    for idx in range(20):
+        try:
+            page = models.parse_activity(api.activity(world.league_id, idx))
+        except Exception:
+            break
+        if not page:
+            break
+        events += [e for e in page if e.when and analysis.to_madrid(e.when).date() == today]
+        if any(e.when and analysis.to_madrid(e.when).date() < today for e in page):
+            break
+    gained = invested = 0
+    for e in events:
+        if e.type_id == models.ACTIVITY_BUY and e.user1_id == my_id:
+            invested += e.amount
+        elif e.type_id == models.ACTIVITY_SELL and e.user1_id == my_id:
+            gained += e.amount
+        elif e.type_id == models.ACTIVITY_CLAUSE and e.user1_id == my_id:
+            invested += e.amount
+        elif e.type_id == models.ACTIVITY_CLAUSE and e.user2_id == my_id:
+            gained += e.amount
+    if not gained and not invested:
+        return f"{b('🧮 Balance de hoy')}\n{i('Sin movimientos de dinero hoy todavía.')}"
+    net = gained - invested
+    verdict = "✅ Día en positivo" if net > 0 else ("➖ Día en tablas" if net == 0 else "🔻 Día en negativo")
+    return (
+        f"{b('🧮 Balance de hoy')}\n"
+        f"Ganado: {b(m(gained))} · Invertido: {b(m(invested))}\n"
+        f"{verdict}: {b(m(net))}"
     )
 
 
@@ -1390,12 +1416,13 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
     now = datetime.now(timezone.utc)
     if world.next_jornada:
         head += f"\n🗓️ Empieza la jornada: {_fmt_when(world.next_jornada, now)}"
-    lines = [head, ""]
+    lines = [head]
     group_names = {1: "🧤 Portero", 2: "🛡️ Defensas", 3: "🎯 Centrocampistas", 4: "⚔️ Delanteros"}
     for pos_id in (1, 2, 3, 4):
         group = sorted((c for c in eleven if c.player.position_id == pos_id), key=lambda c: -c.xpts)
         if not group:
             continue
+        lines.append("")
         lines.append(b(group_names[pos_id]))
         for c in group:
             lines.append(
@@ -1403,6 +1430,7 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
             )
     risky = [c for c in eleven if c.start_prob < 0.6]
     if risky:
+        lines.append("")
         lines.append(b("⚠️ Dudas en el once"))
         for c in risky:
             why = c.note or f"probabilidad de titularidad baja ({c.start_prob:.0%})"
@@ -1449,27 +1477,34 @@ def report_sections(
     `rival_cash` opcional: sin él se omiten el riesgo de que te clausulen y el saldo de
     rivales (requieren el historial completo de movimientos, más caro de pedir). `api` opcional:
     sin él no se piden las ofertas pendientes sobre tus jugadores en venta (una llamada por
-    jugador listado), así que las secciones de pérdidas/venta no las muestran ni llevan botón
-    de aceptar."""
+    jugador listado), así que "En venta ahora" no las muestra ni lleva botón de aceptar, y se
+    omite el balance del día (necesita el historial de actividad).
+    Orden fijo (regla del usuario, 2026-09-23): once, nuevo en el mercado, oportunidades de
+    inversión, tus jugadores en bajada, en venta ahora, cláusulas, riesgo de que te clausulen,
+    tus próximos desbloqueos, saldo de rivales, consejo del día, balance de hoy."""
     stamp = analysis.to_madrid(world.fetched_at).strftime("%d/%m/%Y %H:%M")
     sections: list[tuple[str, dict | None]] = [
         (f"{b('⚽ Informe')}\n{i(stamp)}\n\n{lineup_report(world, news)}", None)
     ]
 
-    sections += buy_sections(world, rival_cash=rival_cash)
+    if store is not None:
+        arrivals_text, arrivals_buttons = market_arrivals_report(world, store)
+        if arrivals_text:
+            sections.append((arrivals_text, arrivals_buttons))
 
-    offers = current_offers(api, world) if api is not None else {}
+    sections += buy_sections(world, rival_cash=rival_cash)
 
     mine_parts = [trends_report(world)]
     sell_buttons = None
     if store is not None:
-        mine_parts += [losing_positions_report(world, store, offers), sell_candidates_report(world, store, offers)]
-        sell_buttons = sell_keyboard(world, store, offers)
+        mine_parts += [losing_positions_report(world, store), sell_candidates_report(world, store)]
+        sell_buttons = sell_keyboard(world, store)
     mine_parts = [p for p in mine_parts if p]
     if mine_parts:
         sections.append(("\n\n".join(mine_parts), sell_buttons))
 
-    listings_text, listings_buttons = my_listings_report(world, offers)
+    offers = current_offers(api, world) if api is not None else {}
+    listings_text, listings_buttons = my_listings_report(world, offers, store)
     if listings_text:
         sections.append((listings_text, listings_buttons))
 
@@ -1481,20 +1516,31 @@ def report_sections(
     if alerts:
         sections.extend(clause_messages)
 
+    if rival_cash:
+        theft = clause_theft_report(world, rival_cash)
+        if theft:
+            sections.append((theft, None))
+
     unlock_bait = own_clause_unlock_report(world)
     if unlock_bait:
         sections.append((unlock_bait, None))
 
     if rival_cash:
-        theft = clause_theft_report(world, rival_cash)
-        if theft:
-            sections.append((theft, None))
         raise_report = clause_raise_report(world, rival_cash)
         if raise_report:
             sections.append((raise_report, None))
         sections.append((rivals_report(world, rival_cash), None))
 
-    sections.append((daily_advice_report(world, rival_cash) + "\n\n" + flip_status_report(s, store), None))
+    sections.append((daily_advice_report(world, rival_cash), None))
+
+    if api is not None:
+        balance = daily_cash_summary_report(api, world)
+        if balance:
+            sections.append((balance, None))
+
+    flip = flip_status_report(s, store)
+    if flip:
+        sections.append((flip, None))
     return sections
 
 

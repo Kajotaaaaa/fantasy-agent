@@ -442,7 +442,7 @@ def cmd_section(args, s) -> None:
 
     store = Store(s.db_file) if args.cmd in (
         "report", "losses", "sell-candidates", "market-news", "listen", "rivals", "clause-risk", "advice", "market",
-        "clause-raise",
+        "clause-raise", "listings",
     ) else None
 
     rival_cash = {}
@@ -480,10 +480,10 @@ def cmd_section(args, s) -> None:
         return text or "No tienes ninguna puja pendiente ahora mismo.", buttons
 
     def listings() -> tuple[str, dict | None]:
-        text, buttons = service.my_listings_report(world, offers)
+        text, buttons = service.my_listings_report(world, offers, store)
         return text or "No tienes a nadie a la venta ahora mismo.", buttons
 
-    offers = service.current_offers(api, world) if args.cmd in ("losses", "sell-candidates", "listings") else {}
+    offers = service.current_offers(api, world) if args.cmd == "listings" else {}
 
     text, buttons = {
         "market": lambda: (
@@ -504,13 +504,10 @@ def cmd_section(args, s) -> None:
             None,
         ),
         "lineup": lambda: (service.lineup_report(world, news), None),
-        "losses": lambda: (
-            service.losing_positions_report(world, store, offers) or "Nada por debajo de lo que pagaste.",
-            service.offers_keyboard(world, offers),
-        ),
+        "losses": lambda: (service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.", None),
         "sell-candidates": lambda: (
-            service.sell_candidates_report(world, store, offers) or "Nadie con tendencia bajando ahora mismo.",
-            service.sell_keyboard(world, store, offers),
+            service.sell_candidates_report(world, store) or "Nadie con tendencia bajando ahora mismo.",
+            service.sell_keyboard(world, store),
         ),
         "market-news": arrivals,
         "listen": lambda: (
