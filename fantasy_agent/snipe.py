@@ -6,10 +6,15 @@ Con `numberOfBids == 1` y tu puja, nadie más compite. Solo BAJA hasta el mínim
 no puede hacerte gastar más; el riesgo es que alguien puje en el último segundo, después de la
 lectura, y te lo lleve.
 
-Las pujas cierran a las 21:00:00 (dato del usuario); el `expirationDate` de la API marca 21:02
-(hora de proceso, ver CLAUDE.md), así que el cierre es `expirationDate - 2 min`. El trabajo lo
-lanza el Worker de Cloudflare (puntual al minuto; el cron de GitHub se retrasa minutos) a las
-20:50, espera hasta 10 s antes del cierre, lee el mercado y actúa.
+El cierre real del mercado NO es una hora fija: cada liga tiene su propio ciclo (una vez al día,
+dos veces, el que sea) y este módulo no lo asume, lo LEE — `next_market_close()` calcula el
+próximo cierre a partir del `expirationDate` de los anuncios que pone LaLiga (2026-09-23, arreglo
+del problema real: el código anterior sí asumía 21:00 para todas las ligas). El `expirationDate`
+de la API marca el cierre + 2 min (hora de proceso, ver CLAUDE.md — este desfase SÍ es fijo,
+pero es un artefacto de la propia API, no una hora de cierre inventada), así que el cierre real
+es `expirationDate - CLOSE_LEAD`. Quien dispara este trabajo (ver `cli._watch_once`) ya no
+depende de un cron a una hora fija: arma el trabajo dinámicamente en cuanto detecta, en la
+vigilancia normal de 30 min, que el próximo cierre está cerca.
 
 `SNIPE_MODE`: `on` baja de verdad; cualquier otra cosa (por defecto `shadow`) solo cuenta lo que
 haría. Además de decidir, toma lecturas a T-60s, T-30s, T-10s, T-3s, T+15s y T+90s para saber
@@ -20,8 +25,8 @@ del usuario 2026-09-22). Antes `_buy` pujaba por la mañana, así que el anuncio
 `numberOfBids` todo el día y cualquier rival que lo mirase podía meterse a competir sabiendo
 que había algo interesante ahí; pujando en el último minuto no da tiempo a que nadie reaccione.
 El mundo con tendencias (`service.build_world(..., with_trends=True)`) se construye ANTES de
-entrar en la espera de precisión, con margen de sobra (el cron despierta a las 20:50, 10 min
-antes del cierre) para no comerse ese margen con las llamadas de `market_value_history`."""
+entrar en la espera de precisión, con margen de sobra (el trabajo se arma con antelación, ver
+`cli._watch_once`) para no comerse ese margen con las llamadas de `market_value_history`."""
 from __future__ import annotations
 
 import os
@@ -36,7 +41,7 @@ from .api import BASE, COMP, FantasyAPI
 from .config import Settings
 from .storage import Store
 
-CLOSE_LEAD = timedelta(minutes=2)  # expirationDate (21:02) - 2 min = cierre real (21:00)
+CLOSE_LEAD = timedelta(minutes=2)  # desfase de proceso de la API: expirationDate = cierre real + 2 min
 FLIP_BUY_AT = -60  # segundos respecto al cierre: último minuto, sin tiempo a que nadie reaccione
 ACT_AT = -10  # segundos respecto al cierre
 SNAPSHOTS = (FLIP_BUY_AT, -30, ACT_AT, -3, 15, 90)
@@ -45,6 +50,18 @@ MAX_WAIT = timedelta(minutes=15)  # si el próximo cierre está más lejos, no h
 
 def close_time(item: models.MarketItem) -> datetime | None:
     return item.expires - CLOSE_LEAD if item.expires else None
+
+
+def next_market_close(market: list[models.MarketItem], now: datetime) -> datetime | None:
+    """Próximo cierre REAL del mercado de esta liga: el más próximo en el futuro entre los
+    `close_time()` de los anuncios que pone LaLiga (no los de otros mánagers, que no marcan el
+    ciclo del mercado). Es la única fuente de verdad sobre "cuándo cierra este mercado" — no
+    asume ninguna hora fija ni que haya un solo cierre al día: cada liga puede tener su propio
+    ciclo (uno diario, dos, el que sea), y esto se adapta solo porque lee el dato de la API en
+    cada llamada. None si ahora mismo no hay ningún anuncio de LaLiga con cierre futuro visible
+    (nadie puesto a la venta por el juego en este momento)."""
+    closes = [c for it in market if it.seller == "LaLiga" and (c := close_time(it)) and c > now]
+    return min(closes, default=None)
 
 
 def is_protected(item: models.MarketItem, top_ids: set[str], skip: set[str]) -> bool:
@@ -122,14 +139,14 @@ def run(api: FantasyAPI, s: Settings, mode: str, close_in: float | None = None) 
         close = now() + timedelta(seconds=close_in)
     else:
         all_closes = [c for it in first if it.seller == "LaLiga" and (c := close_time(it))]
-        closes = sorted(c for c in all_closes if c > now())
+        next_close = next_market_close(first, now())
         if any(timedelta(0) < now() - c < timedelta(minutes=5) for c in all_closes) and not (
-            closes and closes[0] - now() <= MAX_WAIT
+            next_close and next_close - now() <= MAX_WAIT
         ):
             return f"⚠️ {b('Rebaja de último segundo')}: el trabajo llegó tarde, el mercado ya había cerrado. No se hizo nada."
-        if not closes or closes[0] - now() > MAX_WAIT:
+        if not next_close or next_close - now() > MAX_WAIT:
             return ""
-        close = closes[0]
+        close = next_close
 
     # El mundo con tendencias para el flipeo se construye YA, con margen de sobra antes de
     # entrar en la espera de precisión: en el minuto final no hay tiempo para las llamadas de
@@ -154,7 +171,12 @@ def run(api: FantasyAPI, s: Settings, mode: str, close_in: float | None = None) 
         shots[off] = items
         if off == FLIP_BUY_AT and flip_world is not None:
             try:
-                note = flip.run(api, flip_world, flip_store, s, buy_now=True, today=datetime.now().isoformat())
+                # `today` identifica el CIERRE que se está procesando, no el día de calendario
+                # (bug real: antes era `datetime.now().isoformat()`, un valor distinto cada vez
+                # que se llama, así que el "una vez por ciclo" de `flip.run` nunca se cumplía).
+                # Usar `close` en vez de eso también deja procesar correctamente una liga con más
+                # de un cierre el mismo día: cada cierre tiene su propio identificador.
+                note = flip.run(api, flip_world, flip_store, s, buy_now=True, today=close.isoformat())
                 if note:
                     flip_notes.append(note)
             except Exception as exc:

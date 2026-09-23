@@ -14,14 +14,62 @@ from . import analysis, auth, clause_snipe, flip, models, notify, service, snipe
 from .api import FantasyAPI
 from .attendance import estimate_titularidad
 from .config import load_settings
+from .http import request_json
 from .storage import Store
+
+SNIPE_ARM_WINDOW = timedelta(minutes=35)  # más que los 30 min entre ticks: ningún cierre se
+# escapa entre dos pasadas de vigilancia consecutivas (con solo 30 min de margen, un cierre
+# podría caer justo en el hueco entre dos ticks y no armarse nunca a tiempo).
 
 
 def _madrid_now() -> datetime:
     """Hora de España ahora (ver `analysis.to_madrid`). Necesario para que las horas de juego
-    (informe diario, estudio de mercado) signifiquen lo mismo en local y en el runner de GitHub
-    Actions, que va en UTC."""
+    (informe diario) signifiquen lo mismo en local y en el runner de GitHub Actions, que va en
+    UTC."""
     return analysis.to_madrid(datetime.now(timezone.utc))
+
+
+def _dispatch_repo_event(event_type: str, client_payload: dict) -> bool:
+    """Dispara un `repository_dispatch` del propio repo, para armar el trabajo de rebaja de
+    último segundo (`snipe.yml`) en el instante real de cierre en vez de un cron a hora fija
+    (2026-09-23, arreglo del problema del horario de mercado). Usa el `GITHUB_TOKEN` automático
+    de cada ejecución de Actions (con permiso `contents: write`, ver `watch.yml`) y
+    `GITHUB_REPOSITORY` (también automático, "owner/repo") — no hace falta ningún secreto nuevo;
+    ya se había montado así antes para otra cosa y se quitó por producto, no porque no funcionara
+    (ver CLAUDE.md, "Lista de seguimiento CLAUSE_WANTED"). Fuera de un runner de GitHub Actions
+    (por ejemplo en local) o si falla la llamada, no revienta la vigilancia: solo devuelve False
+    (se reintentará en el próximo tick, antes de que el cierre real llegue)."""
+    token = os.environ.get("GITHUB_TOKEN")
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not token or not repo:
+        return False
+    try:
+        request_json(
+            "POST", f"https://api.github.com/repos/{repo}/dispatches",
+            headers={
+                "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json_body={"event_type": event_type, "client_payload": client_payload},
+        )
+        return True
+    except Exception as exc:  # nunca debe tumbar el resto de la vigilancia
+        print(f"[snipe] no se pudo armar el trabajo de cierre: {exc}")
+        return False
+
+
+def _market_cycle_due(prev_close_iso: str | None, now_utc: datetime, processed_iso: str | None) -> bool:
+    """¿Ha cerrado ya el mercado (según el cierre que se conocía del tick anterior,
+    `next_market_end` en el Store) sin que se haya procesado todavía ESE cierre en concreto?
+    Dedup por el propio instante de cierre, no por el día de calendario (2026-09-23, arreglo del
+    problema del horario de mercado):
+    - una liga con dos cierres el mismo día procesa las dos veces, no solo la primera;
+    - un reinicio del bot no duplica nada: `prev_close_iso` sigue en el Store tal cual estaba;
+    - sin `prev_close_iso` (primer arranque, o la API no devolvió ningún cierre visible la
+      última vez) nunca se dispara — no hay nada que comparar todavía."""
+    if prev_close_iso is None:
+        return False
+    return now_utc >= datetime.fromisoformat(prev_close_iso) and processed_iso != prev_close_iso
 
 
 def _out(settings, text: str, telegram: bool, buttons: dict | None = None) -> None:
@@ -524,19 +572,42 @@ def cmd_section(args, s) -> None:
 
 def _watch_once(store: Store, s) -> str:
     """Una pasada: alertas de cláusula siempre (con veredicto propio: precio, racha y
-    noticias reales de los candidatos), informe completo si toca hoy, estudio de mercado
-    justo tras el refresco diario. Hora de España siempre (aunque esto corra en un runner de
-    GitHub Actions en UTC), para que REPORT_HOUR/MARKET_STUDY_HOUR signifiquen lo que dicen."""
+    noticias reales de los candidatos), informe completo si toca hoy (`REPORT_HOUR`, preferencia
+    tuya, no depende del mercado), estudio de mercado justo tras el cierre REAL de esta liga —
+    nunca una hora fija: se detecta comparando el reloj con el `next_market_end` que guardó el
+    tick anterior a partir del `expirationDate` de los anuncios (`snipe.next_market_close`), así
+    que se adapta sola a una liga con un cierre al día, dos, o el ciclo que tenga (2026-09-23,
+    arreglo del problema del horario de mercado: antes asumía siempre las 21:00). Hora de España
+    para `REPORT_HOUR` (aunque esto corra en un runner de GitHub Actions en UTC); el cierre de
+    mercado se compara en UTC, que es de donde sale `expirationDate`."""
+    now_utc = datetime.now(timezone.utc)
     now = _madrid_now()
     today = now.strftime("%Y-%m-%d")
     daily_due = now.hour >= s.report_hour and store.get("last_daily") != today
-    market_due = (
-        (now.hour, now.minute) >= (s.market_study_hour, s.market_study_minute)
-        and store.get("last_market_study") != today
-    )
+
+    # `next_market_end` es el cierre que YA conocíamos del tick anterior: si ya lo hemos pasado y
+    # todavía no se ha procesado ESE cierre concreto (dedup por su propio instante, no por el día
+    # de calendario: una liga con dos cierres el mismo día procesa los dos), el mercado se acaba
+    # de refrescar.
+    prev_close_raw = store.get("next_market_end")
+    market_due = _market_cycle_due(prev_close_raw, now_utc, store.get("last_market_close_processed"))
     force_flip = os.environ.get("FLIP_FORCE_BUY") == "1"
     api = FantasyAPI(s)
     world = _world(api, s, trends=daily_due or market_due or force_flip)
+
+    try:
+        # Vuelve a mirar el mercado TAL CUAL está ahora (ya refrescado si acaba de cerrar) para
+        # saber cuándo es el PRÓXIMO cierre, y lo guarda para el próximo tick. Si ese próximo
+        # cierre está a menos de `SNIPE_ARM_WINDOW`, arma el trabajo de rebaja de último segundo
+        # en el instante real — sustituye al cron de hora fija que había antes.
+        next_close = snipe.next_market_close(world.market, now_utc)
+        if next_close is not None:
+            store.set("next_market_end", next_close.isoformat())
+            if next_close - now_utc <= SNIPE_ARM_WINDOW and store.get("snipe_armed") != next_close.isoformat():
+                if _dispatch_repo_event("fantasy-snipe", {}):
+                    store.set("snipe_armed", next_close.isoformat())
+    except Exception as exc:
+        print(f"[mercado] error detectando el próximo cierre: {exc}")
     service.ensure_clause_trends(api, world, s)
     service.ensure_speculative_trends(api, world, s)
 
@@ -618,7 +689,7 @@ def _watch_once(store: Store, s) -> str:
         arrivals, arrivals_buttons = service.market_arrivals_report(world, store)
         if arrivals:
             notify.send_telegram(s, arrivals, buttons=arrivals_buttons)
-        store.set("last_market_study", today)
+        store.set("last_market_close_processed", prev_close_raw)
 
     if daily_due:
         news = dict(clause_news)

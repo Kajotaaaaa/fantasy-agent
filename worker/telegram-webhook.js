@@ -98,12 +98,11 @@ async function healthCheck(env) {
 }
 
 export default {
-  // Crons (wrangler.toml): a las 20:50 hora de España lanza la rebaja de último segundo
-  // (workflow snipe.yml; el cron de GitHub se retrasa minutos, el de Cloudflare es puntual) y
-  // cada hora comprueba que el vigilante sigue vivo.
+  // Único cron (wrangler.toml): cada hora comprueba que el vigilante sigue vivo. "fantasy-snipe"
+  // (rebaja de último segundo) ya no lo dispara un cron de hora fija — lo arma dinámicamente el
+  // propio tick de GitHub Actions al detectar el cierre real de esta liga (2026-09-23).
   async scheduled(event, env, ctx) {
-    if (event.cron === "13 * * * *") ctx.waitUntil(healthCheck(env));
-    else ctx.waitUntil(dispatch(env, "fantasy-snipe", {}));
+    ctx.waitUntil(healthCheck(env));
   },
 
   async fetch(request, env) {

@@ -281,9 +281,12 @@ def run(
     api: FantasyAPI, world: service.World, store, s: Settings, buy_now: bool, today: str, force: bool = False,
 ) -> str:
     """Un paso del flipeo dentro de la vigilancia. Devuelve un resumen corto para el log ("" si
-    no hay nada que hacer o está apagado). `buy_now`: solo una vez al día, cuando ya se han
-    calculado las tendencias del mercado. `force`: salta el "una vez al día" (para probarlo a
-    mano desde GitHub con FLIP_FORCE_BUY=1); las demás reglas y el tope siguen valiendo."""
+    no hay nada que hacer o está apagado). `buy_now`: solo una vez por CIERRE de mercado, cuando
+    ya se han calculado las tendencias — `today` identifica ese cierre (desde `snipe.py`, el
+    propio `close.isoformat()`; nunca la fecha de calendario a secas, para que una liga con más
+    de un cierre al día compre en cada uno de ellos, no solo en el primero). `force`: salta el
+    "una vez por cierre" (para probarlo a mano desde GitHub con FLIP_FORCE_BUY=1); las demás
+    reglas y el tope siguen valiendo."""
     if s.flip_mode not in ("on", "shadow"):
         return ""
     now = datetime.now(timezone.utc)

@@ -376,6 +376,125 @@ class Tests(unittest.TestCase):
         # El cierre real es 2 minutos antes del expirationDate (21:00 vs 21:02).
         self.assertEqual(snipe.close_time(items[0]), items[0].expires - timedelta(minutes=2))
 
+    def _laliga_listing(self, n, expires):
+        """Un anuncio de LaLiga (no de un rival) con ese `expirationDate` — lo único que hace
+        falta para que `snipe.next_market_close` lo tenga en cuenta."""
+        raw = {
+            "id": f"M{n}", "playerMaster": pm(f"m{n}", f"Mkt{n}", 3, 5_000_000, 30, 4.0),
+            "salePrice": 5_000_000, "expirationDate": expires.isoformat(), "numberOfBids": 0,
+        }
+        return models.parse_market([raw])[0]
+
+    def test_next_market_close_reads_real_timestamp_not_a_fixed_hour(self):
+        """Problema real (2026-09-23): el bot asumía 21:00 para toda liga. next_market_close no
+        mira ninguna hora fija, solo el expirationDate real de los anuncios de LaLiga."""
+        from fantasy_agent import snipe
+
+        # Liga con un cierre diario a una hora cualquiera que NO es 21:00 (08:03 UTC, por
+        # ejemplo) — el expirationDate ya trae el desfase de 2 min de proceso de la API.
+        close_at = NOW.replace(hour=8, minute=3, second=0, microsecond=0) + timedelta(days=1)
+        market = [self._laliga_listing(1, close_at + timedelta(minutes=2))]
+        got = snipe.next_market_close(market, NOW)
+        self.assertEqual(got, close_at)
+
+    def test_next_market_close_ignores_rivals_and_past_closes(self):
+        from fantasy_agent import snipe
+
+        rival = models.parse_market([{
+            "id": "R1", "playerMaster": pm("r1", "Rival", 3, 5_000_000, 30, 4.0), "salePrice": 5_000_000,
+            "expirationDate": (NOW + timedelta(hours=1)).isoformat(), "numberOfBids": 0,
+            "sellerTeam": {"manager": {"managerName": "Pepe"}},
+        }])[0]
+        past = self._laliga_listing(2, NOW - timedelta(minutes=5))  # ya cerró, no cuenta
+        future = self._laliga_listing(3, NOW + timedelta(hours=3))
+        got = snipe.next_market_close([rival, past, future], NOW)
+        self.assertEqual(got, future.expires - snipe.CLOSE_LEAD)
+
+    def test_next_market_close_none_when_nothing_for_sale(self):
+        from fantasy_agent import snipe
+
+        self.assertIsNone(snipe.next_market_close([], NOW))
+
+    def test_market_cycle_two_closes_same_day_both_get_processed(self):
+        """Liga con dos cierres el mismo día (~12 h de intervalo): cada uno debe procesarse una
+        vez, no solo el primero por 'ya se hizo hoy' (bug real que arreglamos: dedup por día de
+        calendario en vez de por el propio cierre)."""
+        from fantasy_agent import cli
+
+        morning_close = NOW.replace(hour=8, minute=0, second=0, microsecond=0)
+        evening_close = morning_close + timedelta(hours=12)
+        processed = None
+
+        # Tick justo después del cierre de la mañana: toca procesar.
+        self.assertTrue(cli._market_cycle_due(morning_close.isoformat(), morning_close + timedelta(minutes=1), processed))
+        processed = morning_close.isoformat()
+        # Un tick posterior, mismo día, antes del cierre de la tarde: ya no vuelve a saltar.
+        self.assertFalse(cli._market_cycle_due(morning_close.isoformat(), morning_close + timedelta(hours=2), processed))
+        # Llega el cierre de la tarde (next_market_end ya se actualizó a ese instante): sí procesa.
+        self.assertTrue(cli._market_cycle_due(evening_close.isoformat(), evening_close + timedelta(minutes=1), processed))
+
+    def test_market_cycle_once_daily_only_fires_after_its_own_close(self):
+        from fantasy_agent import cli
+
+        close = NOW + timedelta(hours=24)
+        self.assertFalse(cli._market_cycle_due(close.isoformat(), NOW, None))  # aún no ha llegado
+        self.assertTrue(cli._market_cycle_due(close.isoformat(), close + timedelta(seconds=1), None))
+
+    def test_market_cycle_survives_restart_without_duplicating(self):
+        """El Store es lo único que hace falta para saber qué cierre tocaba: reiniciar el
+        proceso (aquí, simplemente volver a llamar con los mismos valores que se leerían del
+        Store tras un reinicio) no duplica ni pierde el aviso."""
+        from fantasy_agent import cli
+
+        close_iso = (NOW - timedelta(minutes=1)).isoformat()  # ya cerró, aún no procesado
+        # "Antes de reiniciar": se detecta y se marca como procesado.
+        self.assertTrue(cli._market_cycle_due(close_iso, NOW, None))
+        # "Tras reiniciar": mismo next_market_end leído de disco, y el mismo processed guardado
+        # justo antes de reiniciar — no se repite el aviso.
+        self.assertFalse(cli._market_cycle_due(close_iso, NOW + timedelta(minutes=5), close_iso))
+
+    def test_market_cycle_two_leagues_are_fully_independent(self):
+        """Dos ligas con ciclos distintos (una diaria, otra cada 12h) no comparten ningún estado
+        ni ninguna hora fija: cada una se decide solo con SU propio next_market_end."""
+        from fantasy_agent import cli
+
+        league_a_close = NOW.replace(hour=21, minute=0, second=0, microsecond=0)  # 24h, a las 21:00
+        league_b_close = NOW.replace(hour=8, minute=0, second=0, microsecond=0)   # 12h, a las 08:00
+        moment = NOW.replace(hour=9, minute=0, second=0, microsecond=0)
+        # A las 09:00, a la liga A todavía le queda para su cierre de las 21:00...
+        self.assertFalse(cli._market_cycle_due(league_a_close.isoformat(), moment, None))
+        # ...pero a la B (cerró a las 08:00) ya le toca procesar, sin que A le afecte para nada.
+        self.assertTrue(cli._market_cycle_due(league_b_close.isoformat(), moment, None))
+
+    def test_dispatch_repo_event_survives_api_failure(self):
+        """Un fallo temporal de la API de GitHub no debe tumbar la vigilancia: se reintentará
+        en el siguiente tick, antes de que llegue el cierre real."""
+        from fantasy_agent import cli
+
+        old_env = dict(os.environ)
+        os.environ["GITHUB_TOKEN"] = "x"
+        os.environ["GITHUB_REPOSITORY"] = "kajota/fantasy-agent"
+        original = cli.request_json
+        try:
+            cli.request_json = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("GitHub caído"))
+            self.assertFalse(cli._dispatch_repo_event("fantasy-snipe", {}))
+        finally:
+            cli.request_json = original
+            os.environ.clear()
+            os.environ.update(old_env)
+
+    def test_dispatch_repo_event_noop_without_github_env(self):
+        from fantasy_agent import cli
+
+        old_env = dict(os.environ)
+        os.environ.pop("GITHUB_TOKEN", None)
+        os.environ.pop("GITHUB_REPOSITORY", None)
+        try:
+            self.assertFalse(cli._dispatch_repo_event("fantasy-snipe", {}))
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+
     def test_bid_plan(self):
         rising = analysis.Trend(2.0, 6.0, 12.0)
         plan = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.5, False)

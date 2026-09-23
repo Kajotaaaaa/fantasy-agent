@@ -14,6 +14,14 @@ concurrency:
   group: fantasy-watch
   cancel-in-progress: false
 
+# `contents: write` (2026-09-23): el tick arma dinámicamente el trabajo de rebaja de último
+# segundo (`repository_dispatch` "fantasy-snipe") en el instante real de cierre del mercado de
+# ESTA liga, en vez de depender de un cron a hora fija — hace falta este permiso para que el
+# `GITHUB_TOKEN` automático de la propia ejecución pueda disparar ese evento (ver
+# `cli._dispatch_repo_event`; ya se había usado así antes para otra cosa, ver CLAUDE.md).
+permissions:
+  contents: write
+
 jobs:
   tick:
     runs-on: ubuntu-latest
@@ -45,6 +53,7 @@ jobs:
       - name: fantasy tick
         run: python -m fantasy_agent tick
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           FANTASY_LEAGUE_ID: ${{ secrets.FANTASY_LEAGUE_ID }}

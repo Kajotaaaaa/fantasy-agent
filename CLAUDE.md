@@ -9,12 +9,27 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   todas siguen el patrón vista-previa-por-defecto + `--confirm` para ejecutar de verdad, y
   nunca se deben disparar automáticamente sin que el usuario apruebe esa operación concreta.
 
-## Cierre de las pujas: 21:00 en punto (dato del usuario, no lo que dice la API)
-Las pujas terminan a las **21:00:00**. El `expirationDate` de los anuncios marca 21:02 y los
-movimientos de compra del historial salen con hora ~21:02: es el momento en que se procesa y
-aparecen los resultados y el mercado nuevo, unos minutos DESPUÉS del cierre real (por eso el
-estudio del mercado nuevo va a las 21:05). Cualquier cosa que actúe sobre una puja "en el
-último momento" debe terminar antes de las 21:00:00, no de las 21:02.
+## Cierre del mercado: dinámico, NUNCA una hora fija (arreglado 2026-09-23)
+Hasta el 2026-09-23 el código asumía **21:00** para todas las ligas (dato de una liga concreta,
+no algo que diga la API en general). Era un bug real: otras ligas pueden cerrar a otra hora, o
+tener más de un cierre al día. Ahora el cierre se LEE de la propia API en cada tick, nunca se
+asume:
+- `snipe.next_market_close(market, now)`: el próximo cierre real de la liga es el `expirationDate`
+  más próximo en el futuro entre los anuncios que pone LaLiga (no los de otros mánagers), menos
+  `CLOSE_LEAD` (2 min: SÍ es fijo, pero es un desfase de proceso de la propia API — el
+  `expirationDate` siempre marca ~2 min después del cierre real, sea cual sea la hora — no una
+  hora de cierre inventada).
+- `cli._watch_once` guarda ese valor en el Store (`next_market_end`) en cada tick de 30 min, y
+  `cli._market_cycle_due` decide si "toca procesar un cierre" comparando el reloj contra ESE
+  valor — dedup por el propio instante de cierre, no por día de calendario, así que una liga con
+  dos cierres al día procesa las dos veces.
+- Cuando el próximo cierre está a menos de `cli.SNIPE_ARM_WINDOW` (35 min), el propio tick arma
+  el trabajo de rebaja de último segundo (`repository_dispatch` "fantasy-snipe",
+  `cli._dispatch_repo_event`) en vez de depender de un cron a hora fija del Worker de Cloudflare
+  (ese cron ya no existe, ver `worker/wrangler.toml`: solo queda el de cada hora, healthCheck).
+- `REPORT_HOUR` (informe diario) SÍ sigue siendo una hora fija a propósito: es preferencia del
+  usuario sobre cuándo quiere su resumen, no depende del mercado. `MARKET_STUDY_HOUR`/`_MINUTE`
+  se eliminaron (ya no tienen sentido: el estudio de mercado ahora se dispara solo).
 
 ## Comprar una cláusula en el segundo en que se desbloquea (`clause_snipe.py`)
 Pedido del usuario: ser el primero en clausular. El vigilante de 30 min y el botón normal (20-60
@@ -87,13 +102,14 @@ Idea del usuario: si al final de la subasta eres el ÚNICO que ha pujado, no hac
 más que el mínimo válido. El anuncio trae `numberOfBids` y tu `bid`: con `numberOfBids == 1` y
 tu puja, nadie más compite. Solo BAJA (`api.update_bid`), nunca sube: no puede hacerte gastar
 más; riesgo = que alguien puje en el último segundo tras la lectura.
-- Cadena: cron del Worker de Cloudflare (`wrangler.toml`, 20:50 hora de España — 10 min antes del
-  cierre, para que el retraso de GitHub en arrancar el runner no nos deje fuera —, dos crons por
-  el cambio de hora; puntual al minuto, el cron de GitHub se retrasa minutos) -> `repository_dispatch`
-  `fantasy-snipe` -> `.github/workflows/snipe.yml` -> `python -m fantasy_agent snipe`: espera
-  hasta T-10s del cierre (`expirationDate - 2 min`, ver "Cierre de las pujas"), lee el mercado
-  y baja lo que corresponda; usa la hora del servidor (cabecera `Date`), no la del runner. Si el
-  próximo cierre está a más de 15 min, sale sin hacer nada (el cron que no toca por horario).
+- Cadena (2026-09-23, ya no depende de un cron a hora fija — ver "Cierre del mercado" arriba):
+  `cli._watch_once` (tick de 30 min) detecta con `snipe.next_market_close` que el próximo cierre
+  está a menos de `cli.SNIPE_ARM_WINDOW` (35 min) y arma `repository_dispatch` `fantasy-snipe`
+  (`cli._dispatch_repo_event`) -> `.github/workflows/snipe.yml` -> `python -m fantasy_agent
+  snipe`: espera hasta T-10s del cierre (`expirationDate - 2 min`, ver "Cierre del mercado"), lee
+  el mercado y baja lo que corresponda; usa la hora del servidor (cabecera `Date`), no la del
+  runner. Si el próximo cierre está a más de 15 min (`MAX_WAIT`), sale sin hacer nada — no
+  debería pasar nunca con el armado dinámico, es el mismo margen de siempre por si acaso.
 - `SNIPE_MODE` (variable del repositorio): `on` baja de verdad; vacío/otro = SOMBRA (por
   defecto): solo cuenta lo que haría. Además toma lecturas a T-30s, T-10s, T-3s, T+15s y T+90s
   y las manda por Telegram: sirve para confirmar (1) que `numberOfBids` cuenta también las
@@ -115,7 +131,8 @@ trabajo (`snipe.py`), a `FLIP_BUY_AT = -60` (el minuto final, no ya los 5 que se
 propuesto primero — decisión final del usuario: cuanto menos tiempo visible, mejor), con el
 mismo reloj sincronizado del servidor. El mundo con tendencias
 (`service.build_world(..., with_trends=True)`) se construye ANTES de entrar en la espera de
-precisión (con los ~10 min de margen del cron de las 20:50), para no comerse ese margen con
+precisión (con el margen que da haber armado el trabajo con antelación, ver "Cierre del
+mercado"), para no comerse ese margen con
 las llamadas de `market_value_history` que hacen falta para puntuar candidatos — en el minuto
 final ya no hay tiempo para eso, solo para decidir con lo ya calculado y pujar. El tick normal
 de 30 min (`cmd_tick`) ya NO dispara compras reales (`buy_now` solo con `FLIP_FORCE_BUY`, para
@@ -423,10 +440,11 @@ contra la liga real de producción:
   pagaste de verdad, no una referencia arbitraria). Si ya está recuperando (`trend.d3 > 1%`)
   no avisa todavía — solo pérdidas sostenidas. Solo cubre lo comprado desde que arrancó el
   seguimiento de movimientos (no hay dato de compra para lo que ya tenías antes).
-- **Estudio de mercado diario** (`service.market_arrivals_report`): el mercado de LaLiga se
-  refresca cada día a las 21:00; a las `MARKET_STUDY_HOUR:MARKET_STUDY_MINUTE` (21:05 por
-  defecto, hora de España) se manda un veredicto (1-4 estrellas, como `clause_verdict`) de
-  cada jugador nuevo desde el último estudio (`kv.market_seen:<id>` como snapshot). Las horas
+- **Estudio de mercado** (`service.market_arrivals_report`): ya no espera a una hora fija (ver
+  "Cierre del mercado" arriba) — en cuanto `cli._market_cycle_due` detecta que el mercado real
+  de esta liga acaba de refrescarse, se manda un veredicto (1-4 estrellas, como
+  `clause_verdict`) de cada jugador nuevo desde el último estudio (`kv.market_seen:<id>` como
+  snapshot). Las horas
   de juego se calculan con `cli._madrid_now()` (regla DST de la UE a mano, sin `zoneinfo`/
   `tzdata`: en Windows `zoneinfo` necesita el paquete `tzdata`, que no es estándar, y el
   runner de GitHub Actions va en UTC) — nunca compares horas de juego con `datetime.now()` a

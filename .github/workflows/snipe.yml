@@ -1,9 +1,11 @@
 name: fantasy-snipe
 
-# Rebaja de último segundo (fantasy_agent/snipe.py). Lo dispara el cron del Worker de
-# Cloudflare a las 20:50 hora de España (repository_dispatch); el trabajo espera hasta 10 s
-# antes del cierre de las 21:00 (~10 min: el margen absorbe lo que tarde GitHub en arrancar el
-# runner), así que sin grupo de concurrencia ni caché propia.
+# Rebaja de último segundo (fantasy_agent/snipe.py). Lo dispara `repository_dispatch` en cuanto
+# el `tick` de GitHub Actions (cada 30 min) detecta, mirando el `expirationDate` real de los
+# anuncios, que el próximo cierre del mercado está cerca (ver `cli._dispatch_repo_event`,
+# 2026-09-23: antes lo disparaba un cron fijo a las 20:50, que asumía que todas las ligas
+# cierran a las 21:00). El margen entre "detectado" y "cierre real" absorbe lo que tarde
+# GitHub en arrancar el runner, así que sin grupo de concurrencia ni caché propia.
 # `workflow_dispatch` para lanzarlo a mano. SNIPE_MODE (variable del repositorio): `on` baja
 # de verdad; sin ella (o cualquier otra cosa) va en SOMBRA y solo cuenta lo que haría.
 on:

@@ -2,11 +2,11 @@ name = "fantasy-agent-telegram"
 main = "telegram-webhook.js"
 compatibility_date = "2025-01-01"
 
-# 20:50 hora de España (10 min antes del cierre de las 21:00: margen para que GitHub arranque el
-# runner), una vez con horario de verano (UTC+2 -> 18:50 UTC) y otra con el de invierno (UTC+1
-# -> 19:50 UTC). La que no toca la descarta el propio trabajo (snipe.py sale si no hay ningún
-# cierre de mercado en los próximos 15 minutos).
-# Además, cada hora al minuto 13: comprobación de que el vigilante sigue vivo (telegram-webhook.js,
-# healthCheck).
+# El disparo de "fantasy-snipe" (rebaja de último segundo) YA NO va por un cron de hora fija
+# (2026-09-23, arreglo del problema del horario de mercado: asumía las 21:00 para todas las
+# ligas). Ahora lo arma dinámicamente el propio `tick` de GitHub Actions (cada 30 min, ve
+# `expirationDate` real de los anuncios) en cuanto detecta que el próximo cierre está cerca —
+# ver `cli._dispatch_repo_event`. Solo queda el cron de cada hora al minuto 13: comprobación de
+# que el vigilante sigue vivo (telegram-webhook.js, healthCheck).
 [triggers]
-crons = ["50 18 * * *", "50 19 * * *", "13 * * * *"]
+crons = ["13 * * * *"]
