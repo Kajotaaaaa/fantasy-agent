@@ -69,13 +69,15 @@ def send_telegram(settings: Settings, text: str, buttons: dict | None = None) ->
 def set_webhook(settings: Settings, url: str, secret_token: str) -> dict:
     """Apunta el bot a la URL del Worker. Telegram reenvía ese `secret_token` en la cabecera
     `X-Telegram-Bot-Api-Secret-Token` de cada llamada, para que el Worker rechace todo lo que
-    no venga de Telegram. Solo pide las pulsaciones de botones (`callback_query`)."""
+    no venga de Telegram. Pide pulsaciones de botones (`callback_query`) y mensajes de texto
+    (`message`, 2026-09-23: hace falta para "/menu" — sin "message" en `allowed_updates`,
+    Telegram ni siquiera reenvía el mensaje al Worker, por más que este ya supiera manejarlo)."""
     if not telegram_enabled(settings):
         raise RuntimeError("Configura TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID en el .env")
     return request_json(
         "POST",
         f"https://api.telegram.org/bot{settings.telegram_token}/setWebhook",
-        json_body={"url": url, "secret_token": secret_token, "allowed_updates": ["callback_query"]},
+        json_body={"url": url, "secret_token": secret_token, "allowed_updates": ["callback_query", "message"]},
     )
 
 
