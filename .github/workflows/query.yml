@@ -1,0 +1,65 @@
+name: fantasy-query
+
+# Lo dispara el Cloudflare Worker (worker/telegram-webhook.js) cuando pulsas una opción del menú
+# ("/menu" en el chat): a diferencia de fantasy-action.yml, es de SOLO LECTURA (ningún comando de
+# este workflow mueve dinero ni cambia nada), así que el Worker lo dispara al primer toque, sin
+# la doble confirmación de las acciones. `FANTASY_QUERY` solo puede ser uno de los nombres de
+# comando ya validados por el propio Worker (ver PAYLOADS.q), y aun así aquí solo se usa como
+# argumento posicional de `argparse` (nunca interpolado en el shell) — un valor que no sea un
+# subcomando real simplemente falla con el error normal de argparse, no ejecuta nada.
+on:
+  repository_dispatch:
+    types: [fantasy-query]
+
+jobs:
+  query:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restaurar estado (sesión + dedupe de alertas)
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: fantasy-state-${{ github.run_id }}
+          restore-keys: |
+            fantasy-state-
+
+      - name: Sembrar sesión inicial si no hay caché todavía
+        run: |
+          mkdir -p data
+          if [ ! -s data/tokens.json ] && [ -n "$FANTASY_TOKENS_JSON" ]; then
+            echo "$FANTASY_TOKENS_JSON" > data/tokens.json
+          fi
+        env:
+          FANTASY_TOKENS_JSON: ${{ secrets.FANTASY_TOKENS_JSON }}
+
+      - name: Huella de la sesión antes
+        id: before
+        run: echo "hash=$(sha256sum data/tokens.json 2>/dev/null | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: fantasy (consulta del menú)
+        run: python -m fantasy_agent "$FANTASY_QUERY" --telegram
+        env:
+          FANTASY_QUERY: ${{ github.event.client_payload.query }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FANTASY_LEAGUE_ID: ${{ secrets.FANTASY_LEAGUE_ID }}
+          FANTASY_TEAM_ID: ${{ secrets.FANTASY_TEAM_ID }}
+
+      - name: Huella de la sesión después
+        id: after
+        if: always()
+        run: echo "hash=$(sha256sum data/tokens.json 2>/dev/null | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Guardar estado actualizado (solo si la sesión cambió)
+        if: always() && steps.before.outputs.hash != steps.after.outputs.hash
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: fantasy-state-${{ github.run_id }}

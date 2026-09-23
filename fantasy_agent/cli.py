@@ -517,6 +517,7 @@ def cmd_section(args, s) -> None:
         "bids": bids,
         "unlocks": unlocks,
         "advice": lambda: (service.daily_advice_report(world, rival_cash), None),
+        "balance": lambda: (service.daily_cash_summary_report(api, world), None),
     }[args.cmd]()
     _out(s, text, args.telegram, buttons=buttons)
 
@@ -726,6 +727,7 @@ def main(argv: list[str] | None = None) -> None:
         ("bids", "Tus pujas pendientes, con botón para cambiarlas"),
         ("unlocks", "Próximos desbloqueos de cláusula (24 h), con botón de comprar al desbloquearse"),
         ("advice", "Consejo táctico del día"),
+        ("balance", "Balance de hoy: ganado, invertido y si el día sale en positivo o negativo"),
         ("report", "Informe completo"),
     ]:
         p = sub.add_parser(name, help=help_)

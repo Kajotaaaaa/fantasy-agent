@@ -14,7 +14,9 @@
 //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET, GITHUB_TOKEN, GITHUB_REPO
 
 // Cada verbo con el formato de su payload: la puja lleva "<anuncio>:<cantidad>" (la cantidad
-// exacta que enseña el botón); el resto, solo un id.
+// exacta que enseña el botón); el resto, solo un id. "q" es distinto: no es un id, es el nombre
+// de un comando de solo lectura ya fijado de antemano (ver QUERY_MENU) — el enum de la regex es
+// la validación, no hace falta nada más para que no se pueda colar un subcomando arbitrario.
 const PAYLOADS = {
   c: /^\d{1,12}$/,
   b: /^\d{1,12}(:\d{1,12})?$/,
@@ -24,11 +26,27 @@ const PAYLOADS = {
   a: /^\d{1,12}(:\d{1,12})?$/, // armar la compra de una cláusula al desbloquearse: "<jugador>:<importe>"
   o: /^\d{1,12}:\d{1,12}:\d{1,12}$/, // aceptar oferta: "<jugador>:<oferta>:<importe>"
   r: /^\d{1,12}:\d{1,12}$/, // rechazar oferta: "<jugador>:<oferta>"
+  q: /^(report|market|listings|losses|sell-candidates|balance)$/, // consulta del menú "/menu"
 };
 // Qué workflow lanza cada verbo al confirmar: por defecto el corto de acciones (fantasy-action);
-// armar una cláusula espera hasta el desbloqueo, así que va a su propio trabajo largo.
-const EVENTS = { a: "fantasy-clause-snipe" };
+// armar una cláusula espera hasta el desbloqueo, así que va a su propio trabajo largo; una
+// consulta del menú es de solo lectura y va a su propio workflow corto (fantasy-query.yml).
+const EVENTS = { a: "fantasy-clause-snipe", q: "fantasy-query" };
 const CONFIRM_PREFIX = "✅ Confirmar · ";
+
+// Menú de consultas bajo demanda ("/menu" en el chat, petición del usuario 2026-09-23: "un panel
+// de botones... para consultar cosas exactas"). Cada opción dispara fantasy-query.yml, que
+// ejecuta el comando de la CLI correspondiente con --telegram — mismo mecanismo de siempre
+// (repository_dispatch), solo que de SOLO LECTURA, así que se lanza al primer toque, sin la
+// doble confirmación de las acciones que mueven dinero (ver más abajo, verbo "q").
+const QUERY_MENU = [
+  [{ text: "📊 Informe completo", callback_data: "q:report" }],
+  [{ text: "🛒 Mercado para tu once", callback_data: "q:market" }],
+  [{ text: "📤 En venta ahora", callback_data: "q:listings" }],
+  [{ text: "🔻 Corta pérdidas", callback_data: "q:losses" }],
+  [{ text: "📉 Candidatos a vender", callback_data: "q:sell-candidates" }],
+  [{ text: "🧮 Balance de hoy", callback_data: "q:balance" }],
+];
 
 const tg = (env, method, body) =>
   fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
@@ -95,6 +113,18 @@ export default {
     }
 
     const update = await request.json();
+
+    // "/menu" en el chat (mensaje de texto, no un botón): abre el teclado de consultas. Fuera de
+    // esto, cualquier otro texto se ignora — este webhook solo entiende botones y este comando.
+    const msg = update.message;
+    if (msg && msg.text === "/menu" && msg.chat && String(msg.chat.id) === String(env.TELEGRAM_CHAT_ID)) {
+      await tg(env, "sendMessage", {
+        chat_id: msg.chat.id, text: "☰ ¿Qué quieres consultar?",
+        reply_markup: { inline_keyboard: QUERY_MENU },
+      });
+      return new Response("ok");
+    }
+
     const cb = update.callback_query;
     if (!cb || !cb.message) return new Response("ok");
     // Solo se atiende tu chat: si alguien más encuentra el bot, sus pulsaciones no hacen nada.
@@ -141,6 +171,17 @@ export default {
         await setKeyboard(
           withoutCancel.map((row) => (hasCode(row, confirmCode) ? [{ text: labelOf(confirmBtn), callback_data: code }] : row)),
         );
+      }
+      return new Response("ok");
+    }
+
+    if (verb === "q") {
+      // Consulta de solo lectura (menú "/menu"): no mueve nada, así que se dispara al primer
+      // toque, sin la doble confirmación de las acciones (regla del usuario, 2026-09-23).
+      await answer("Consultando…");
+      const res = await dispatch(env, EVENTS.q, { query: payload });
+      if (!res.ok) {
+        await tg(env, "sendMessage", { chat_id, text: `❌ No pude lanzar la consulta (GitHub respondió ${res.status}).` });
       }
       return new Response("ok");
     }
