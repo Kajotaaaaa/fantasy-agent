@@ -1500,14 +1500,16 @@ def report_sections(
     todos los botones amontonados al final, y no se veía cuál era de quién. Omite lo que no
     tenga nada relevante que decir, para no mandar un tocho. `store` es opcional: sin él no se
     puede saber qué pagaste por tus jugadores, así que se omite la sección de corta-pérdidas.
-    `rival_cash` opcional: sin él se omiten el riesgo de que te clausulen y el saldo de
-    rivales (requieren el historial completo de movimientos, más caro de pedir). `api` opcional:
-    sin él no se piden las ofertas pendientes sobre tus jugadores en venta (una llamada por
-    jugador listado), así que "En venta ahora" no las muestra ni lleva botón de aceptar, y se
-    omite el balance del día (necesita el historial de actividad).
+    `rival_cash` opcional: sin él se omite el saldo de rivales (requiere el historial completo
+    de movimientos, más caro de pedir). `api` opcional: sin él no se piden las ofertas
+    pendientes sobre tus jugadores en venta (una llamada por jugador listado), así que "En venta
+    ahora" no las muestra ni lleva botón de aceptar, y se omite el balance del día (necesita el
+    historial de actividad).
     Orden fijo (regla del usuario, 2026-09-23): once, nuevo en el mercado, oportunidades de
-    inversión, tus jugadores en bajada, en venta ahora, cláusulas, riesgo de que te clausulen,
-    tus próximos desbloqueos, saldo de rivales, consejo del día, balance de hoy."""
+    inversión, tus jugadores en bajada, en venta ahora, cláusulas, tus próximos desbloqueos,
+    saldo de rivales, consejo del día, balance de hoy. Sin "riesgo de que te clausulen"
+    (`clause_theft_report`): el check de "Rivales" ya dice si te pueden clausular (regla del
+    usuario, 2026-09-23) — la sección seguía sirviendo para `clause-risk` como comando suelto."""
     stamp = analysis.to_madrid(world.fetched_at).strftime("%d/%m/%Y %H:%M")
     sections: list[tuple[str, dict | None]] = [
         (f"{b('⚽ Informe')}\n{i(stamp)}\n\n{lineup_report(world, news)}", None)
@@ -1541,11 +1543,6 @@ def report_sections(
     clause_messages, alerts = clauses_report(world, s, news)
     if alerts:
         sections.extend(clause_messages)
-
-    if rival_cash:
-        theft = clause_theft_report(world, rival_cash)
-        if theft:
-            sections.append((theft, None))
 
     unlock_bait = own_clause_unlock_report(world)
     if unlock_bait:
