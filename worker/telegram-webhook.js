@@ -182,7 +182,17 @@ export default {
       const res = await dispatch(env, EVENTS.q, { query: payload });
       if (!res.ok) {
         await tg(env, "sendMessage", { chat_id, text: `❌ No pude lanzar la consulta (GitHub respondió ${res.status}).` });
+        return new Response("ok");
       }
+      // El toast de "Consultando…" desaparece en un par de segundos y esto tarda 20-40 s
+      // (arrancar un runner de GitHub desde cero, no hay forma de acelerarlo con este mecanismo
+      // sin montar un servidor siempre encendido) — sin un mensaje que se quede en el chat, el
+      // usuario no tiene forma de saber que el toque sí ha hecho algo (petición del usuario,
+      // 2026-09-23). No hay contador en vivo: para eso el propio job necesitaría el message_id
+      // de este aviso para ir editándolo, más cableado del que compensa por ahora.
+      await tg(env, "sendMessage", {
+        chat_id, text: "⏳ Generando… tarda unos 20-40 s, te lo mando en cuanto esté.",
+      });
       return new Response("ok");
     }
 
