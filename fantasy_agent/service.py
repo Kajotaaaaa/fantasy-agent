@@ -573,10 +573,11 @@ def market_arrivals_report(world: World, store) -> tuple[str, dict | None]:
     for stars, item, trend, label, reasons in rows:
         p = item.player
         stars_str = "★" * stars + "☆" * (4 - stars)
-        detail = " · ".join(esc(r) for r in reasons) + " · " + analysis.trend_words(trend)
+        primary, *rest = [esc(r) for r in reasons]
+        tail = " · ".join(rest + [analysis.trend_words(trend)])
         cards.append(
-            f"{b(p.name)} <i>{p.position}·{esc(analysis.team_label(p.team))}</i> · {b(m(item.price))} · {stars_str} {label}\n"
-            f"{i(detail)}"
+            f"{b(p.name)} <i>{p.position}·{esc(analysis.team_label(p.team))}</i> · {b(m(item.price))} · {stars_str}\n"
+            f"{label}\n{i(primary)}\n{i(tail)}"
         )
     head = f"{b('🗞️ Nuevo en el mercado')}\n{i('Estudio de viabilidad')}"
     keyboard = _keyboard([
