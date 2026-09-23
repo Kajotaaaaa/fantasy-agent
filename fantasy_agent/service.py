@@ -591,10 +591,54 @@ def market_arrivals_report(world: World, store) -> tuple[str, dict | None]:
     return head + "\n\n" + "\n".join(cards), keyboard
 
 
-def losing_positions_report(world: World, store) -> str:
+def current_offers(api: FantasyAPI, world: World) -> dict[str, tuple[int, str]]:
+    """Mejor oferta pendiente ahora mismo por cada jugador tuyo puesto a la venta: (importe, id
+    de oferta). Un jugador en bajada o en venta no sirve de nada si no ves también lo que te
+    ofrecen y no puedes aceptarlo desde ahí mismo — de eso vive esta función: se llama una vez
+    por informe y se reparte a `losing_positions_report`, `sell_candidates_report`,
+    `sell_keyboard` y `my_listings_report` para que todos hablen de la misma oferta."""
+    listed = {item.player.id for item in _my_listings(world)}
+    out: dict[str, tuple[int, str]] = {}
+    for slot in world.my_slots:
+        if slot.player.id not in listed or not slot.player_team_id:
+            continue
+        try:
+            payload = api.player_offers(world.league_id, slot.player_team_id)
+        except Exception:
+            continue
+        offers = models.as_list(payload, "offers", "elements", "items")
+        if not offers and isinstance(payload, dict) and payload and not any(isinstance(v, list) for v in payload.values()):
+            offers = [payload]
+        best_amount, best_id = 0, ""
+        for offer in offers:
+            amount = models.to_int(models.pick(offer, "money", "offerMoney", "amount", "price", "salePrice", default=0))
+            offer_id = str(models.pick(offer, "id", "offerId", default="") or "")
+            if amount > best_amount and offer_id.isdigit():
+                best_amount, best_id = amount, offer_id
+        if best_amount and best_id:
+            out[slot.player.id] = (best_amount, best_id)
+    return out
+
+
+def _offer_line(p: models.Player, offers: dict[str, tuple[int, str]] | None) -> str:
+    offer = (offers or {}).get(p.id)
+    return f"\n{i(f'📨 Te ofrecen ahora: {m(offer[0])}')}" if offer else ""
+
+
+def _offer_row(p: models.Player, offers: dict[str, tuple[int, str]] | None) -> list[list[dict]]:
+    offer = (offers or {}).get(p.id)
+    if not offer:
+        return []
+    amount, offer_id = offer
+    return [_action_row(f"✅ Aceptar {m(amount)} por {p.name}", f"o:{p.id}:{offer_id}:{amount}")]
+
+
+def losing_positions_report(world: World, store, offers: dict[str, tuple[int, str]] | None = None) -> str:
     """Jugadores tuyos por debajo de lo que pagaste (precio de compra real, no tendencia de
     mercado sin más) — usa el histórico de `my_transactions`, así que solo cubre lo comprado
-    desde que ese seguimiento arrancó."""
+    desde que ese seguimiento arrancó. `offers` (ver `current_offers`): si alguno tiene una
+    oferta puesta ahora, se ve el valor de mercado Y lo que te ofrecen juntos, en la misma
+    línea que la pérdida — antes solo salía el dato de la pérdida, sin la oferta."""
     buy_prices = {pid: int(v) for pid, v in store.prefixed("buy_price:").items()}
     trends = {pid: t for pid, (_, t) in world.trends.items()}
     candidates = analysis.loss_cut_candidates(world.my_slots, buy_prices, trends)
@@ -606,6 +650,7 @@ def losing_positions_report(world: World, store) -> str:
         cards.append(
             f"{b(p.name)} · {m(buy)} → {m(p.market_value)} · "
             f"{i(f'-{loss_pct:.0f}% ({m(buy - p.market_value)})')}"
+            f"{_offer_line(p, offers)}"
         )
     return f"{b('🔻 Corta pérdidas')}\n{i('Por debajo de lo que pagaste')}\n\n" + "\n".join(cards)
 
@@ -622,10 +667,11 @@ def _sell_candidates(world: World, store) -> tuple[list[models.SquadSlot], dict[
     return analysis.sell_candidates(world.my_slots, buy_prices, trends), buy_prices, trends
 
 
-def sell_candidates_report(world: World, store) -> str:
+def sell_candidates_report(world: World, store, offers: dict[str, tuple[int, str]] | None = None) -> str:
     """Candidatos a poner a la venta según tendencia (ver `analysis.sell_candidates`): lleva
     bajando 3 días, sea cual sea la pérdida acumulada. Los que ya están en venta se marcan
-    (siguen cumpliendo la regla, pero no hay nada que hacer con ellos)."""
+    (siguen cumpliendo la regla, pero no hay nada que hacer con ellos). `offers`: ver
+    `current_offers` — si hay una oferta puesta, se ve junto al valor de mercado."""
     candidates, buy_prices, trends = _sell_candidates(world, store)
     if not candidates:
         return ""
@@ -640,20 +686,41 @@ def sell_candidates_report(world: World, store) -> str:
         cards.append(
             f"{b(p.name)} · {m(buy)} → {m(p.market_value)} ({diff_pct:+.0f}%) · "
             f"{i(analysis.trend_words(trend))}{status}"
+            f"{_offer_line(p, offers)}"
         )
     head = f"{b('📉 Candidatos a vender')}\n{i('Tendencia bajando 3 días — no esperar a que caiga más')}"
     return head + "\n\n" + "\n".join(cards)
 
 
-def sell_keyboard(world: World, store) -> dict | None:
-    """Botón de vender (a valor de mercado) para cada candidato que aún no está en venta."""
+def offers_keyboard(world: World, offers: dict[str, tuple[int, str]] | None = None) -> dict | None:
+    """Botón de aceptar por cada jugador tuyo con una oferta puesta ahora mismo (`offers`, ver
+    `current_offers`), sin importar si además es candidato a vender o a corta-pérdidas: la
+    oferta se puede aceptar igual, así que siempre lleva su botón."""
+    if not offers:
+        return None
+    rows: list[list[dict]] = []
+    for slot in world.my_slots:
+        rows += _offer_row(slot.player, offers)
+    return _keyboard(rows)
+
+
+def sell_keyboard(world: World, store, offers: dict[str, tuple[int, str]] | None = None) -> dict | None:
+    """Botón de vender (a valor de mercado) para cada candidato que aún no está en venta, más un
+    botón de aceptar por cada jugador con una oferta puesta ahora mismo (`offers`, ver
+    `current_offers`) — cubre tanto a los candidatos de esta lista como a los de corta-pérdidas,
+    para no dejar la oferta sin botón solo por no encajar también en `sell_candidates`."""
     candidates, _, _ = _sell_candidates(world, store)
     listed = {item.player.id for item in _my_listings(world)}
-    return _keyboard([
-        _action_row(f"📤 Vender {sl.player.name} {m(sl.player.market_value)}", f"s:{sl.player.id}")
-        for sl in candidates
-        if sl.player.id not in listed and sl.player_team_id and sl.player.market_value
-    ])
+    candidate_ids = {sl.player.id for sl in candidates}
+    rows: list[list[dict]] = []
+    for sl in candidates:
+        if sl.player.id not in listed and sl.player_team_id and sl.player.market_value:
+            rows.append(_action_row(f"📤 Vender {sl.player.name} {m(sl.player.market_value)}", f"s:{sl.player.id}"))
+        rows += _offer_row(sl.player, offers)
+    for slot in world.my_slots:  # ofertas de jugadores con oferta que no son candidatos a vender
+        if slot.player.id not in candidate_ids:
+            rows += _offer_row(slot.player, offers)
+    return _keyboard(rows)
 
 
 def offers_watch_report(world: World, store=None) -> tuple[str, dict | None]:
@@ -741,17 +808,31 @@ def my_bids_report(world: World) -> tuple[str, dict | None]:
     return head + "\n\n" + "\n".join(cards), _keyboard(rows)
 
 
-def my_listings_report(world: World) -> tuple[str, dict | None]:
-    """Tus jugadores puestos a la venta ahora, cada uno con su botón de retirarlo."""
+def my_listings_report(world: World, offers: dict[str, tuple[int, str]] | None = None) -> tuple[str, dict | None]:
+    """Tus jugadores puestos a la venta ahora, cada uno con su botón de retirarlo. `offers` (ver
+    `current_offers`): si alguno tiene una oferta puesta, se ve el precio que pides Y lo que te
+    ofrecen en líneas propias, con botón para aceptarla ahí mismo; si no, se dice que aún no ha
+    llegado ninguna, para no dejarlo en el aire."""
     listings = _my_listings(world)
     if not listings:
         return "", None
-    cards = [f"{b(item.player.name)} · pides {b(m(item.price))}" for item in listings]
-    head = f"{b('📤 En venta ahora')}\n{i('Ofertas del juego cada ciclo de las 21:00')}"
-    keyboard = _keyboard([
-        _action_row(f"↩️ Retirar {item.player.name}", f"w:{item.player.id}") for item in listings
-    ])
-    return head + "\n\n" + "\n".join(cards), keyboard
+    cards = []
+    for item in listings:
+        offer = (offers or {}).get(item.player.id)
+        if offer:
+            cards.append(
+                f"{b(item.player.name)} ·\n"
+                f"📨 pides {b(m(item.price))}\n"
+                f"📨 Te ofrecen ahora: {b(m(offer[0]))}"
+            )
+        else:
+            cards.append(f"{b(item.player.name)} · pides {b(m(item.price))}\n{i('No ha llegado la oferta aún')}")
+    head = f"{b('📤 En venta ahora')}\n{i('Ofertas a tus jugadores en venta')}"
+    rows = []
+    for item in listings:
+        rows.append(_action_row(f"↩️ Retirar {item.player.name}", f"w:{item.player.id}"))
+        rows += _offer_row(item.player, offers)
+    return head + "\n\n" + "\n\n".join(cards), _keyboard(rows)
 
 
 def rivals_report(world: World, rival_cash: dict[str, int] | None = None) -> str:
@@ -1356,6 +1437,7 @@ def flip_status_report(s: Settings, store) -> str:
 
 def report_sections(
     world: World, s: Settings, news: dict[str, dict] | None, store=None, rival_cash: dict[str, int] | None = None,
+    api: FantasyAPI | None = None,
 ) -> list[tuple[str, dict | None]]:
     """Un mensaje por especialidad (alineación / mercado / cláusulas...), listo para Telegram.
     Cada entrada es (texto, teclado_o_None). Las cláusulas (`clauses_report`) y ahora también
@@ -1365,7 +1447,10 @@ def report_sections(
     tenga nada relevante que decir, para no mandar un tocho. `store` es opcional: sin él no se
     puede saber qué pagaste por tus jugadores, así que se omite la sección de corta-pérdidas.
     `rival_cash` opcional: sin él se omiten el riesgo de que te clausulen y el saldo de
-    rivales (requieren el historial completo de movimientos, más caro de pedir)."""
+    rivales (requieren el historial completo de movimientos, más caro de pedir). `api` opcional:
+    sin él no se piden las ofertas pendientes sobre tus jugadores en venta (una llamada por
+    jugador listado), así que las secciones de pérdidas/venta no las muestran ni llevan botón
+    de aceptar."""
     stamp = analysis.to_madrid(world.fetched_at).strftime("%d/%m/%Y %H:%M")
     sections: list[tuple[str, dict | None]] = [
         (f"{b('⚽ Informe')}\n{i(stamp)}\n\n{lineup_report(world, news)}", None)
@@ -1373,16 +1458,18 @@ def report_sections(
 
     sections += buy_sections(world, rival_cash=rival_cash)
 
+    offers = current_offers(api, world) if api is not None else {}
+
     mine_parts = [trends_report(world)]
     sell_buttons = None
     if store is not None:
-        mine_parts += [losing_positions_report(world, store), sell_candidates_report(world, store)]
-        sell_buttons = sell_keyboard(world, store)
+        mine_parts += [losing_positions_report(world, store, offers), sell_candidates_report(world, store, offers)]
+        sell_buttons = sell_keyboard(world, store, offers)
     mine_parts = [p for p in mine_parts if p]
     if mine_parts:
         sections.append(("\n\n".join(mine_parts), sell_buttons))
 
-    listings_text, listings_buttons = my_listings_report(world)
+    listings_text, listings_buttons = my_listings_report(world, offers)
     if listings_text:
         sections.append((listings_text, listings_buttons))
 

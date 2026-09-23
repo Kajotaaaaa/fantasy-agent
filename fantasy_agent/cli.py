@@ -450,7 +450,9 @@ def cmd_section(args, s) -> None:
         rival_cash = service.estimate_rival_cash(api, world, store)
 
     if args.cmd == "report":
-        sections = service.report_sections(world, s, news, store, service.estimate_rival_cash(api, world, store))
+        sections = service.report_sections(
+            world, s, news, store, service.estimate_rival_cash(api, world, store), api=api,
+        )
         print("\n\n".join(text for text, _ in sections))
         if args.telegram:
             notify.send_report(s, sections)
@@ -478,8 +480,10 @@ def cmd_section(args, s) -> None:
         return text or "No tienes ninguna puja pendiente ahora mismo.", buttons
 
     def listings() -> tuple[str, dict | None]:
-        text, buttons = service.my_listings_report(world)
+        text, buttons = service.my_listings_report(world, offers)
         return text or "No tienes a nadie a la venta ahora mismo.", buttons
+
+    offers = service.current_offers(api, world) if args.cmd in ("losses", "sell-candidates", "listings") else {}
 
     text, buttons = {
         "market": lambda: (
@@ -500,10 +504,13 @@ def cmd_section(args, s) -> None:
             None,
         ),
         "lineup": lambda: (service.lineup_report(world, news), None),
-        "losses": lambda: (service.losing_positions_report(world, store) or "Nada por debajo de lo que pagaste.", None),
+        "losses": lambda: (
+            service.losing_positions_report(world, store, offers) or "Nada por debajo de lo que pagaste.",
+            service.offers_keyboard(world, offers),
+        ),
         "sell-candidates": lambda: (
-            service.sell_candidates_report(world, store) or "Nadie con tendencia bajando ahora mismo.",
-            service.sell_keyboard(world, store),
+            service.sell_candidates_report(world, store, offers) or "Nadie con tendencia bajando ahora mismo.",
+            service.sell_keyboard(world, store, offers),
         ),
         "market-news": arrivals,
         "listen": lambda: (
