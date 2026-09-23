@@ -483,8 +483,8 @@ class Tests(unittest.TestCase):
         recovering = analysis.Trend(1.5, 2.0, -6.0)
         self.assertTrue(recovering.recovering)
         sustained = analysis.Trend(1.5, 2.0, 6.0)
-        stars_rec, _, _ = analysis.market_verdict(item, recovering, None, False)
-        stars_sus, _, _ = analysis.market_verdict(item, sustained, None, False)
+        stars_rec, _, _, _ = analysis.market_verdict(item, recovering, None, False)
+        stars_sus, _, _, _ = analysis.market_verdict(item, sustained, None, False)
         self.assertEqual(stars_rec, stars_sus)
 
     def test_flip_plan(self):
