@@ -565,20 +565,24 @@ def market_arrivals_report(world: World, store) -> tuple[str, dict | None]:
     for item in new_items:
         trend = world.trends.get(item.player.id, (item.player, analysis.Trend(0, 0, 0)))[1]
         is_top = item.player.id in world.league_top_ids
-        stars, label, reasons = analysis.market_verdict(item, trend, world.my_cash, is_top)
-        rows.append((stars, item, trend, label, reasons))
+        stars, label, reasons, take = analysis.market_verdict(item, trend, world.my_cash, is_top)
+        rows.append((stars, item, trend, label, reasons, take))
     rows.sort(key=lambda r: -r[0])
 
     cards = []
-    for stars, item, trend, label, reasons in rows:
+    for stars, item, trend, label, reasons, take in rows:
         p = item.player
         stars_str = "★" * stars + "☆" * (4 - stars)
         primary, *rest = [esc(r) for r in reasons]
-        tail = " · ".join(rest + [analysis.trend_words(trend)])
-        cards.append(
-            f"{b(p.name)} <i>{p.position}·{esc(analysis.team_label(p.team))}</i> · {b(m(item.price))} · {stars_str}\n"
-            f"{label}\n{i(primary)}\n{i(tail)}"
-        )
+        lines = [
+            f"{b(p.name)} <i>{p.position}·{esc(analysis.team_label(p.team))}</i> · {b(m(item.price))} · {stars_str}",
+            label, i(primary),
+        ]
+        if rest:
+            lines.append(i(" · ".join(rest)))
+        lines.append(i(analysis.trend_words(trend)))
+        lines.append(b(esc(take)))
+        cards.append("\n".join(lines))
     head = f"{b('🗞️ Nuevo en el mercado')}\n{i('Estudio de viabilidad')}"
     keyboard = _keyboard([
         row for stars, item, trend, *_ in rows if stars >= 3

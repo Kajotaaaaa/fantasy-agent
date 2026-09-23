@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html as _html
 import math
+import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -380,7 +381,74 @@ def market_verdict(
         stars, label = 2, "🤔 Con dudas"
     else:
         stars, label = 1, "🚫 Paso"
-    return stars, label, reasons
+    cant_afford = my_cash is not None and item.price > my_cash
+    take = market_take(stars, trend, p.available, p.status, cant_afford)
+    return stars, label, reasons, take
+
+
+_TAKE_LEADS: dict[int, list[str]] = {
+    4: [
+        "Fichaje claro: rinde muy por encima de lo que pide, yo entraría antes de que se note en el precio.",
+        "Esto es una ganga: por ese dinero da mucho más de lo normal. Yo no lo dejaría pasar.",
+        "Palabras mayores: puntúa como uno mucho más caro. Fichaje prioritario si tienes hueco.",
+        "De los mejores fichajes que vas a ver salir esta semana: rendimiento y precio van de la mano.",
+    ],
+    3: [
+        "Buena opción: cumple a buen precio, se puede fichar con confianza.",
+        "Sin sorpresas: rinde lo que cuesta y no tiene pegas a la vista. Fichaje razonable.",
+        "Cumplidor: no va a hacer magia, pero para lo que pide, compensa.",
+        "Apuesta segura antes que espectacular: se sostiene bien a ese precio.",
+    ],
+    2: [
+        "Con dudas: ni el rendimiento ni el precio destacan; yo no me lanzaría de cabeza.",
+        "Ahí ahí: no está mal, pero tampoco convence del todo para lo que pide. Yo esperaría.",
+        "Ni fu ni fa: hay argumentos a favor y en contra a partes iguales. Fichaje de relleno, no de urgencia.",
+        "No me acaba de cuadrar: podría ser peor, pero seguro que hay algo mejor por parecido precio.",
+    ],
+    1: [
+        "Paso: no compensa ahora mismo, hay mejores opciones por ese dinero.",
+        "Yo no lo ficharía: ni el rendimiento ni el momento acompañan.",
+        "Mejor mirar a otro lado: pide más de lo que da ahora mismo.",
+        "Candidato a quedarse en el mercado: nada en sus números pide entrar ya.",
+    ],
+}
+
+
+def market_take(stars: int, trend: Trend, available: bool, status: str, cant_afford: bool) -> str:
+    """Conclusión en una frase, en plan "esto es lo que yo haría": no repite los números de
+    arriba, dice si fichar o no y por qué en corto. `stars` ya resume rendimiento + precio +
+    tendencia (ver `market_verdict`); aquí solo se añaden matices que cambian la decisión
+    (lesión/sanción, saldo) o el momento (frenazo/remontada) sin cambiar el veredicto de fondo.
+    Varias coletillas por nivel (elegidas al azar) para que no sea siempre la misma frase."""
+    lead = random.choice(_TAKE_LEADS[stars])
+    extra = []
+    if not available:
+        extra.append(random.choice([
+            f"ojo: está {status.lower()}",
+            f"eso sí, {status.lower()} ahora mismo",
+            f"con la reserva de que está {status.lower()}",
+        ]))
+    if trend.cooling:
+        extra.append(random.choice([
+            "aunque ya se le nota el frenazo, no hay prisa por pujar",
+            "eso sí, la subida está perdiendo fuelle",
+            "aunque el ritmo de subida ya no es el de hace unos días",
+        ]))
+    elif trend.recovering:
+        extra.append(random.choice([
+            "y ya remonta tras la caída: buen momento para entrar",
+            "y empieza a levantar cabeza justo ahora",
+            "que además ya está recuperando terreno",
+        ]))
+    if cant_afford:
+        extra.append(random.choice([
+            "aunque hoy no te llega el saldo",
+            "eso sí, ahora mismo no tienes para pagarlo",
+            "pero te falta dinero para esto hoy",
+        ]))
+    if extra:
+        lead += " (" + "; ".join(extra) + ")"
+    return lead
 
 
 def score_investment(item: MarketItem, trend: Trend) -> float | None:
