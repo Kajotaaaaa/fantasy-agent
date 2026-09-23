@@ -390,7 +390,7 @@ def _rivals_line(world: World, price: int, rival_cash: dict[str, int] | None) ->
     return [i(f"👥 Rivales que pueden pujar: ✅ {yes} · ❔ {maybe} · ❌ {no} (seguro · dudoso · no; saldo estimado ±40M)")]
 
 
-def _plan_lines(plan: analysis.BidPlan, num_bids: int = 0, days: int = 3) -> list[str]:
+def _plan_lines(plan: analysis.BidPlan, days: int = 3) -> list[str]:
     lines = []
     if plan.margin:
         lines.append(
@@ -399,13 +399,12 @@ def _plan_lines(plan: analysis.BidPlan, num_bids: int = 0, days: int = 3) -> lis
         )
     if plan.max_bid:
         if plan.max_reason == "value":
-            why = f"lo que se espera que valga en {days} días — no pierdes, se recupera al revenderlo/clausularlo"
+            why = f" · lo que se espera que valga en {days} días — no pierdes, se recupera al revenderlo/clausularlo"
         elif plan.max_reason == "cushion":
-            bids_note = f"{num_bids} puja{'s' if num_bids != 1 else ''} ya puestas" if num_bids else "rivales con saldo de sobra"
-            why = f"hay competencia visible ({bids_note}), para no perderlo por poco"
+            why = ""
         else:
-            why = "techo por puntos: más allá, mejor la alternativa del mercado"
-        lines.append(f"🏆 Máximo a pagar: {b(m(plan.max_bid))} · {why}")
+            why = " · techo por puntos: más allá, mejor la alternativa del mercado"
+        lines.append(f"🏆 Máximo a pagar: {b(m(plan.max_bid))}{why}")
     return lines
 
 
@@ -460,7 +459,7 @@ def _market_card(
         f"💰 Mínimo {b(m(plan.minimum))} · {p.avg_points:.1f} pts/partido",
         i(analysis.trend_words(trend)),
         *_my_bid_line(item),
-        *_plan_lines(plan, item.bids, days=14),
+        *_plan_lines(plan, days=14),
     ])
     return text, _keyboard(_bid_rows(world, item, trend, is_top, rival_cash=rival_cash))
 
@@ -501,7 +500,7 @@ def _investment_card(
         f"💰 Mínimo {b(m(plan.minimum))}",
         i(analysis.trend_words(trend)),
         *_my_bid_line(item),
-        *_plan_lines(plan, item.bids, days=3),
+        *_plan_lines(plan, days=3),
         *_rivals_line(world, plan.minimum, rival_cash),
     ])
     return text, _keyboard(_bid_rows(world, item, trend, False, with_ceiling=False, rival_cash=rival_cash))
