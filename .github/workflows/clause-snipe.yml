@@ -5,6 +5,12 @@ name: fantasy-clause-snipe
 # action="a:<player_id>"). El trabajo ESPERA hasta el desbloqueo (como mucho ~5 h 45 min: un
 # trabajo de GitHub aguanta 6 h) y paga en ese segundo. Sin grupo de concurrencia: puedes armar
 # varias a la vez. La acción entra por variable de entorno, no interpolada en el script.
+#
+# Caché en su propio prefijo (fantasy-clausesnipe-, no fantasy-state-): este trabajo puede tardar
+# horas, así que si guarda su copia de `data/` al final (porque cambió el token de sesión) NO debe
+# poder colarse como "la más reciente" para el vigilante de 30 min (watch.yml) ni para snipe.yml
+# — si lo hiciera, les devolvería un estado de hace horas y les borraría el registro de qué avisos
+# ya mandaron, haciendo que se repitan.
 on:
   repository_dispatch:
     types: [fantasy-clause-snipe]
@@ -60,4 +66,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: data
-          key: fantasy-state-${{ github.run_id }}
+          key: fantasy-clausesnipe-state-${{ github.run_id }}

@@ -342,12 +342,15 @@ def run(
     # reintenta sin más; un 409 ("importe no actualizado") DESPUÉS del desbloqueo significa que
     # el dueño cambió la cláusula: se comprueba (como mucho cada RECHECK_EVERY s) y, si es así,
     # se cancela y se pregunta; si un intento cuelga o el jugador ya aparece en tu plantilla, se
-    # da por pagado sin volver a pagar.
+    # da por pagado sin volver a pagar. `already_owned`: no lo pagó ESTE trabajo (lo consiguió
+    # otra ejecución armada en paralelo, o ya lo tenías) — se avisa distinto para no dar a
+    # entender que hubo una compra nueva o que el otro aviso pudo fallar.
     started = now()
     deadline = started + FIRE_WINDOW
     last_error = ""
     attempts = 0
     paid = False
+    already_owned = False
     last_recheck = 0.0
     while now() < deadline and not paid:
         attempts += 1
@@ -371,14 +374,21 @@ def run(
             last_error = str(exc)
             if _mine_now(fast, world, player_id):
                 paid = True
+                already_owned = True
     if not paid and not dry and _mine_now(fast, world, player_id):
         paid = True
+        already_owned = True
 
-    if paid:
+    if paid and not already_owned:
         took = (now() - (fire_at or started)).total_seconds()  # desde el desbloqueo (negativo = entró antes, no debería)
         msg = (
             f"✅ {tag}{b('¡Cláusula pagada!')}\n{b(name)} de {esc(owner)} por {b(service.m(amount))}\n"
             f"{i(f'Pagada {took:+.1f} s respecto al desbloqueo ({attempts} intentos).')}"
+        )
+    elif paid:  # already_owned: ya era tuyo cuando este trabajo fue a pagar; no ha hecho nada
+        msg = (
+            f"ℹ️ {tag}{b(name)} de {esc(owner)}: ya era tuyo al llegar el desbloqueo.\n"
+            f"{i('Esta compra armada no ha pagado nada (se consiguió por otra vía justo antes).')}"
         )
     else:
         msg = (
@@ -387,4 +397,5 @@ def run(
         )
     if counter_id is not None:
         notify.edit_message(s, counter_id, msg)
-    notify.send_telegram(s, msg)
+    else:
+        notify.send_telegram(s, msg)
