@@ -571,8 +571,9 @@ def trends_report(world: World) -> str:
 
 def market_arrivals_report(world: World, store) -> tuple[str, dict | None]:
     """Lo que ha entrado nuevo al mercado de LaLiga desde el último estudio (pensado para
-    correr una vez al día, justo tras el refresco diario del mercado a las 21:00) con un
-    veredicto propio para cada fichaje — no una lista recortada por nota de corte, sino
+    correr justo tras el cierre real de mercado de esta liga, sea cual sea su ciclo — ver
+    `snipe.next_market_close`) con un veredicto propio para cada fichaje — no una lista
+    recortada por nota de corte, sino
     "esto es lo fresco y esto es lo que opino de cada uno". Guarda qué ids ha visto para poder
     distinguir "nuevo" de "ya lo vi ayer y sigue sin venderse". Devuelve (texto, teclado): solo
     llevan botón de puja los que el veredicto valora con 3 estrellas o más."""
@@ -800,7 +801,7 @@ def my_bids_report(world: World) -> tuple[str, dict | None]:
         note = "" if it.my_bid == minimum else f" · el mínimo ahora es {m(minimum)}"
         cards.append(f"{b(it.player.name)} · tu puja {b(m(it.my_bid))}{note} · {i(analysis.trend_words(trend))}")
         rows += _bid_rows(world, it, trend, it.player.id in world.league_top_ids, with_ceiling=False)
-    head = f"{b('📌 Tus pujas pendientes')}\n{i('Se cierran a las 21:00 en punto; el resultado tarda unos minutos')}"
+    head = f"{b('📌 Tus pujas pendientes')}\n{i('Se cierran cuando cierre el mercado; el resultado tarda unos minutos')}"
     return head + "\n\n" + "\n".join(cards), _keyboard(rows)
 
 

@@ -312,7 +312,7 @@ def _act_sell(api, s, player_id: str) -> str:
     api.list_for_sale(world.league_id, slot.player_team_id, price)
     return (
         f"✅ {service.b('A la venta')}\n{service.b(slot.player.name)} por {service.m(price)}\n"
-        f"{service.i('El juego manda ofertas en el ciclo de las 21:00; las revisas y decides tú.')}"
+        f"{service.i('El juego manda ofertas en cada cierre de mercado; las revisas y decides tú.')}"
     )
 
 

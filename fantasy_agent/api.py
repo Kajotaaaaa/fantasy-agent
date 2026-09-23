@@ -117,8 +117,9 @@ class FantasyAPI:
 
     def list_for_sale(self, league_id: str, player_team_id: str, price: int) -> Any:
         """Pone un jugador tuyo a la venta. IRREVERSIBLE en el sentido de que empieza a
-        recibir ofertas del juego en cada ciclo de mercado (21:00) hasta que aceptes,
-        rechaces, o lo retires. No verificado todavía contra una cuenta real."""
+        recibir ofertas del juego en cada ciclo de mercado (el de esta liga, sea cual sea su
+        hora) hasta que aceptes, rechaces, o lo retires. No verificado todavía contra una
+        cuenta real."""
         return self._write("POST", f"{COMP}/league/{league_id}/market/sell", {"playerId": player_team_id, "salePrice": price})
 
     def accept_offer(self, league_id: str, market_id: str, offer_id: str, amount: int) -> Any:
