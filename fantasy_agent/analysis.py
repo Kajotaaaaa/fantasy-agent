@@ -1046,6 +1046,14 @@ CLAUSE_RAISE_MULTIPLIER = 2
 # jugador está pegado al valor de mercado (robo barato, el problema que describió el usuario) y
 # por tanto merece la pena poner el anzuelo.
 CLAUSE_BAIT_RATIO = 1.2
+# Para un jugador "de valor" (de los mejores del campeonato, buen rendimiento o racha sostenida
+# fuerte) el anzuelo se calcula sobre dónde estará dentro de este plazo, no sobre el valor en el
+# momento exacto del desbloqueo (petición del usuario, 2026-09-22). 14 días (el horizonte de
+# "Oportunidades de inversión") resultó demasiado agresivo como primer paso — extrapola una
+# racha corta demasiado lejos y obliga a una inversión grande de golpe (petición del usuario,
+# 2026-09-23): mejor un plazo corto y, si la racha se confirma, `clause_raise_followups` avisa
+# para volver a subirla, en vez de apostarlo todo a la primera.
+CLAUSE_BAIT_HORIZON_DAYS = 3
 CLAUSE_DANGER_RATIO = 1.08
 
 

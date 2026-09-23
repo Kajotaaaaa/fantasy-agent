@@ -564,6 +564,13 @@ def _watch_once(store: Store, s) -> str:
     except Exception as exc:
         print(f"[anzuelo] error: {exc}")
 
+    try:
+        service.ensure_clause_followup_trends(api, world, store)
+        for note in service.clause_raise_followups(world, store, s):
+            print(f"[anzuelo] {note}")
+    except Exception as exc:
+        print(f"[anzuelo] error en recordatorio: {exc}")
+
     tx = service.my_transactions(api, world, store)
     if tx:
         notify.send_telegram(s, "<b>📒 Movimientos</b>\n\n" + "\n\n".join(tx))

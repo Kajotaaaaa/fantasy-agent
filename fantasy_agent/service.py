@@ -1212,11 +1212,24 @@ def ensure_own_unlock_trends(api: FantasyAPI, world: World, hours: int = 24) -> 
             print(f"[aviso] sin histórico para {p.name}: {exc}")
 
 
-def _unlock_bait_card(sl: models.SquadSlot, world: World, now: datetime) -> str:
+def _unlock_bait_card(sl: models.SquadSlot, world: World, now: datetime, store=None) -> str:
+    """Petición del usuario (2026-09-23): a un jugador "de valor" (de los mejores de la liga en
+    su puesto, buen rendimiento o racha sostenida fuerte) el anzuelo se calcula sobre dónde
+    estará dentro de `CLAUSE_BAIT_HORIZON_DAYS` (un plazo corto, no los 14 días de "Oportunidades
+    de inversión": eso extrapolaba demasiado una racha corta y obligaba a una subida — y un
+    coste — grandes de golpe), no sobre el valor en el momento exacto del desbloqueo — subirlo
+    lo justo para llegar a ese momento no sirve de nada si el jugador sigue dando puntos y
+    subiendo. Al resto (sin racha ni rendimiento destacable) se les sigue apuntando solo a la
+    hora del desbloqueo, como antes. `store`: solo cuando viene del aviso automático (no del
+    informe de solo-lectura) se guarda el objetivo para que `clause_raise_followups` compruebe
+    en `CLAUSE_BAIT_HORIZON_DAYS` si la racha se cumplió y, si es así, proponga subirla otra vez
+    en vez de intentarlo todo a la primera."""
     p = sl.player
     trend = world.trends.get(p.id, (p, analysis.Trend(0, 0, 0)))[1]
     hours_left = max((sl.clause_locked_until - now).total_seconds() / 3600, 0)
-    projected = analysis.project_value(p.market_value, trend, days=hours_left / 24) if p.market_value else 0
+    valuable = p.id in world.league_top_ids or p.avg_points >= 5 or trend.d7 >= 5
+    horizon_days = analysis.CLAUSE_BAIT_HORIZON_DAYS if valuable else hours_left / 24
+    projected = analysis.project_value(p.market_value, trend, days=horizon_days) if p.market_value else 0
     until = analysis.to_madrid(sl.clause_locked_until).strftime("%H:%M:%S")
     ratio = f"x{sl.clause / p.market_value:.2f}" if p.market_value else "?"
     lines = [
@@ -1224,13 +1237,19 @@ def _unlock_bait_card(sl: models.SquadSlot, world: World, now: datetime) -> str:
         f"Cláusula: {b(m(sl.clause))} ({ratio} de mercado) · valor hoy: {m(p.market_value)}",
     ]
     if p.market_value and abs(projected - p.market_value) >= p.market_value * 0.01:
-        lines.append(f"Proyección para esa hora: ~{m(projected)} ({analysis.trend_words(trend)})")
+        when = f"en {analysis.CLAUSE_BAIT_HORIZON_DAYS} días (jugador de valor)" if valuable else "para esa hora"
+        lines.append(f"Proyección {when}: ~{m(projected)} ({analysis.trend_words(trend)})")
     plan = analysis.clause_raise_plan(sl.clause, projected or p.market_value, world.my_cash or 0)
     if plan:
         lines.append(
             f"💡 Súbela {m(plan.raise_amount)} pagando {b(m(plan.cost))} → queda en {b(m(plan.new_clause))} "
             f"(anzuelo, ≤{analysis.CLAUSE_BAIT_RATIO}x mercado) · si pica, ganas {m(plan.guaranteed_profit)} de más"
         )
+        if store is not None and valuable:
+            store.set(f"clause_bait_followup:{p.id}", json.dumps({
+                "check_at": (now + timedelta(days=analysis.CLAUSE_BAIT_HORIZON_DAYS)).isoformat(),
+                "value_then": projected,
+            }))
     else:
         lines.append(i("Ya está en un nivel razonable — no hace falta tocarla."))
     return "\n".join(lines)
@@ -1239,17 +1258,16 @@ def _unlock_bait_card(sl: models.SquadSlot, world: World, now: datetime) -> str:
 def own_clause_unlock_alerts(world: World, store) -> list[str]:
     """Aviso, una vez por jugador, 24h antes de que se desbloquee la cláusula de alguien TUYO:
     situación actual (cláusula vs. valor de mercado) y recomendación de anzuelo (petición del
-    usuario, 2026-09-22) calculada sobre el valor PROYECTADO a la hora del desbloqueo (según su
-    racha, `analysis.project_value`), no sobre el valor de hoy — si está subiendo, el anzuelo
-    tiene que apuntar a donde va a estar, no a donde está ahora. Usa `analysis.clause_raise_plan`
-    (mismo criterio que el resto del sistema: hasta `CLAUSE_BAIT_RATIO`, nunca fuera de alcance).
-    """
+    usuario, 2026-09-22) calculada sobre el valor PROYECTADO (según su racha,
+    `analysis.project_value`), no sobre el valor de hoy — si está subiendo, el anzuelo tiene que
+    apuntar a donde va a estar, no a donde está ahora. Usa `analysis.clause_raise_plan` (mismo
+    criterio que el resto del sistema: hasta `CLAUSE_BAIT_RATIO`, nunca fuera de alcance)."""
     now = datetime.now(timezone.utc)
     notes = []
     for sl in own_clause_unlock_candidates(world, hours=24):
         if not store.alert_is_new(f"clausebait:{sl.player.id}", ttl_hours=24):
             continue
-        notes.append(_unlock_bait_card(sl, world, now))
+        notes.append(_unlock_bait_card(sl, world, now, store))
     return notes
 
 
@@ -1263,6 +1281,65 @@ def own_clause_unlock_report(world: World) -> str:
     cards = [_unlock_bait_card(sl, world, now) for sl in candidates]
     head = f"{b('🔓⏳ Próximos desbloqueos (tuyos)')}\n{i('Próximas 24h — anzuelo recomendado antes de que se libere')}"
     return head + "\n\n" + "\n\n".join(cards)
+
+
+def ensure_clause_followup_trends(api: FantasyAPI, world: World, store) -> None:
+    """Histórico de valor para los jugadores con un recordatorio de subida de cláusula pendiente
+    de revisar hoy (ver `clause_raise_followups`) — su cláusula ya está abierta, así que no
+    salen en `own_clause_unlock_candidates`/`ensure_own_unlock_trends` y necesitan su propio
+    pedido de histórico."""
+    now = datetime.now(timezone.utc)
+    for pid, raw in store.prefixed("clause_bait_followup:").items():
+        if pid in world.trends:
+            continue
+        if datetime.fromisoformat(json.loads(raw)["check_at"]) > now:
+            continue
+        p = next((sl.player for sl in world.my_slots if sl.player.id == pid), None)
+        if p is None:
+            continue
+        try:
+            hist = models.parse_value_history(api.market_value_history(pid))
+            world.trends[pid] = (p, analysis.trend_from_history(hist))
+        except Exception as exc:
+            print(f"[anzuelo] sin histórico para {p.name}: {exc}")
+
+
+def clause_raise_followups(world: World, store, s: Settings) -> list[str]:
+    """Cuando `_unlock_bait_card` sugirió subir la cláusula de un jugador "de valor" apuntando a
+    su valor dentro de `CLAUSE_BAIT_HORIZON_DAYS`, pasado ese plazo se comprueba si la racha se
+    cumplió (petición del usuario, 2026-09-23: en vez de apostarlo todo a la primera con una
+    proyección larga, un plazo corto y, si se confirma, un recordatorio para volver a subirla).
+    Si el valor de hoy no llegó a lo proyectado, la racha se cortó: no se insiste, la subida ya
+    hecha fue la apuesta y aquí se calla. Si se cumplió (o superó), se avisa y, si aún compensa
+    subir más, se vuelve a programar el mismo plazo — la cadena sigue mientras la racha aguante."""
+    now = datetime.now(timezone.utc)
+    out = []
+    for pid, raw in list(store.prefixed("clause_bait_followup:").items()):
+        data = json.loads(raw)
+        if datetime.fromisoformat(data["check_at"]) > now:
+            continue
+        store.set(f"clause_bait_followup:{pid}", "")  # consumido; se rearma abajo si sigue la racha
+        slot = next((sl for sl in world.my_slots if sl.player.id == pid), None)
+        if slot is None or not slot.player.market_value or slot.player.market_value < data["value_then"]:
+            continue
+        trend = world.trends.get(pid, (slot.player, analysis.Trend(0, 0, 0)))[1]
+        projected = analysis.project_value(slot.player.market_value, trend, days=analysis.CLAUSE_BAIT_HORIZON_DAYS)
+        plan = analysis.clause_raise_plan(slot.clause, projected, world.my_cash or 0)
+        if not plan:
+            continue
+        notify.send_telegram(
+            s,
+            f"🔁 {b('La racha se confirma')}\n{b(slot.player.name)} ha llegado a {b(m(slot.player.market_value))} "
+            f"(iba camino de {m(data['value_then'])} cuando se sugirió subirla).\n"
+            f"💡 Súbela {m(plan.raise_amount)} pagando {b(m(plan.cost))} → queda en {b(m(plan.new_clause))} "
+            f"(anzuelo, ≤{analysis.CLAUSE_BAIT_RATIO}x mercado) · si pica, ganas {m(plan.guaranteed_profit)} de más",
+        )
+        store.set(f"clause_bait_followup:{pid}", json.dumps({
+            "check_at": (now + timedelta(days=analysis.CLAUSE_BAIT_HORIZON_DAYS)).isoformat(),
+            "value_then": projected,
+        }))
+        out.append(f"recordatorio {slot.player.name}")
+    return out
 
 
 def ensure_speculative_trends(api: FantasyAPI, world: World, s: Settings) -> None:
