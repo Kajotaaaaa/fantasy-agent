@@ -461,7 +461,6 @@ def _market_card(
         i(analysis.trend_words(trend)),
         *_my_bid_line(item),
         *_plan_lines(plan, item.bids, days=14),
-        *_rivals_line(world, plan.minimum, rival_cash),
     ])
     return text, _keyboard(_bid_rows(world, item, trend, is_top, rival_cash=rival_cash))
 
