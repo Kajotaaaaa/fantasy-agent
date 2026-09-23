@@ -405,7 +405,7 @@ def _plan_lines(plan: analysis.BidPlan, num_bids: int = 0, days: int = 3) -> lis
             why = f"hay competencia visible ({bids_note}), para no perderlo por poco"
         else:
             why = "techo por puntos: más allá, mejor la alternativa del mercado"
-        lines.append(f"🏆 Máximo (nuestras reglas): {b(m(plan.max_bid))} · {why}")
+        lines.append(f"🏆 Máximo a pagar: {b(m(plan.max_bid))} · {why}")
     return lines
 
 
