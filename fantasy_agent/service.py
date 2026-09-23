@@ -300,6 +300,18 @@ def _market_picks(world: World, min_score: float = 8.0) -> list[tuple[models.Mar
     return picks
 
 
+def _market_study_picks(world: World, top: int = 3) -> list[tuple[models.MarketItem, analysis.Trend, bool]]:
+    """Cuando nadie llega a la nota mínima de `_market_picks`, el estudio de los mejores
+    candidatos que haya de todos modos (aunque no lleguen): el usuario quiere ver que sí se ha
+    mirado el mercado, no que la sección desaparece sin más (regla del usuario, 2026-09-23)."""
+    out = []
+    for o in _opportunities(world)[:top]:
+        p = o.item.player
+        trend = world.trends.get(p.id, (p, analysis.Trend(0, 0, 0)))[1]
+        out.append((o.item, trend, p.id in world.league_top_ids))
+    return out
+
+
 def _investment_picks(world: World, top: int = 5) -> list[tuple[models.MarketItem, analysis.Trend]]:
     """Candidatos a flipeo (comprar y revender rápido). Excluye TOP de liga (a esos los quieres
     para tu once, no para venderlos) y también a cualquiera que ya salga en `_market_picks`
@@ -460,10 +472,16 @@ def market_report(world: World, min_score: float = 8.0, rival_cash: dict[str, in
     campeonato en su puesto y te lo estás perdiendo si no lo ves. Lleva también su lado
     económico (tendencia y proyección a 14 días): fichar bien y que encima suba de valor
     no son cosas distintas, es la misma decisión."""
-    cards = [_market_card(world, item, trend, is_top, rival_cash)[0] for item, trend, is_top in _market_picks(world, min_score)]
-    if not cards:
-        return ""
+    picks = _market_picks(world, min_score)
     head = f"{b('🛒 Mercado para tu once')}\n{i('Saldo disponible: ' + m(world.my_cash))}"
+    if not picks:
+        study = _market_study_picks(world)
+        if not study:
+            return ""
+        cards = [_market_card(world, item, trend, is_top, rival_cash)[0] for item, trend, is_top in study]
+        note = i("Nadie llega a la nota mínima; esto es lo mejor que hay ahora mismo (sin botón de puja)")
+        return f"{head}\n{note}\n\n" + "\n\n".join(cards)
+    cards = [_market_card(world, item, trend, is_top, rival_cash)[0] for item, trend, is_top in picks]
     return head + "\n\n" + "\n\n".join(cards)
 
 
@@ -511,7 +529,13 @@ def buy_sections(world: World, min_score: float = 8.0, rival_cash: dict[str, int
     picks = _market_picks(world, min_score)
     head = f"{b('🛒 Mercado para tu once')}\n{i('Saldo disponible: ' + m(world.my_cash))}"
     if not picks:
-        sections.append((f"{head}\n\n{i('Nada que llegue a la nota mínima hoy.')}", None))
+        study = _market_study_picks(world)
+        if study:
+            cards = [_market_card(world, item, trend, is_top, rival_cash)[0] for item, trend, is_top in study]
+            note = i("Nadie llega a la nota mínima; esto es lo mejor que hay ahora mismo (sin botón de puja)")
+            sections.append((f"{head}\n{note}\n\n" + "\n\n".join(cards), None))
+        else:
+            sections.append((f"{head}\n\n{i('No hay nada pujable en el mercado ahora mismo.')}", None))
     for idx, (item, trend, is_top) in enumerate(picks):
         text, kb = _market_card(world, item, trend, is_top, rival_cash)
         sections.append((f"{head}\n\n{text}" if idx == 0 else text, kb))
