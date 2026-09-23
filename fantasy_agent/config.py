@@ -38,7 +38,6 @@ class Settings:
     telegram_chat_id: str | None
     clause_window_hours: int
     watch_interval_min: int
-    report_hour: int
     request_delay_s: float
     flip_mode: str  # "on" | "shadow" | cualquier otra cosa = apagado (ver flip.py)
 
@@ -66,7 +65,6 @@ def load_settings() -> Settings:
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID") or None,
         clause_window_hours=int(os.environ.get("CLAUSE_WINDOW_HOURS", "24")),
         watch_interval_min=int(os.environ.get("WATCH_INTERVAL_MIN", "30")),
-        report_hour=int(os.environ.get("REPORT_HOUR", "9")),
         request_delay_s=float(os.environ.get("REQUEST_DELAY_S", "0.4")),
         flip_mode=(os.environ.get("FLIP_MODE") or "off").strip().lower(),
     )

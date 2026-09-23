@@ -72,6 +72,17 @@ def _market_cycle_due(prev_close_iso: str | None, now_utc: datetime, processed_i
     return now_utc >= datetime.fromisoformat(prev_close_iso) and processed_iso != prev_close_iso
 
 
+def _last_close_of_day(closed_at: datetime, next_close: datetime | None) -> bool:
+    """¿Es `closed_at` el ÚLTIMO cierre de mercado de este día natural (hora de España)?
+    (2026-09-23, informe diario ya sin `REPORT_HOUR`.) Se sabe comparando su fecha con la del
+    PRÓXIMO cierre ya conocido: si cae en otro día (o no hay próximo todavía), `closed_at` fue el
+    último — así una liga con dos cierres al día manda el informe diario tras el segundo, no tras
+    el primero, y una liga con uno solo lo manda ese mismo cierre."""
+    if next_close is None:
+        return True
+    return analysis.to_madrid(next_close).strftime("%Y-%m-%d") != analysis.to_madrid(closed_at).strftime("%Y-%m-%d")
+
+
 def _out(settings, text: str, telegram: bool, buttons: dict | None = None) -> None:
     print(text)
     if telegram:
@@ -572,18 +583,22 @@ def cmd_section(args, s) -> None:
 
 def _watch_once(store: Store, s) -> str:
     """Una pasada: alertas de cláusula siempre (con veredicto propio: precio, racha y
-    noticias reales de los candidatos), informe completo si toca hoy (`REPORT_HOUR`, preferencia
-    tuya, no depende del mercado), estudio de mercado justo tras el cierre REAL de esta liga —
-    nunca una hora fija: se detecta comparando el reloj con el `next_market_end` que guardó el
-    tick anterior a partir del `expirationDate` de los anuncios (`snipe.next_market_close`), así
-    que se adapta sola a una liga con un cierre al día, dos, o el ciclo que tenga (2026-09-23,
-    arreglo del problema del horario de mercado: antes asumía siempre las 21:00). Hora de España
-    para `REPORT_HOUR` (aunque esto corra en un runner de GitHub Actions en UTC); el cierre de
-    mercado se compara en UTC, que es de donde sale `expirationDate`."""
+    noticias reales de los candidatos), estudio de mercado justo tras el cierre REAL de esta
+    liga — nunca una hora fija: se detecta comparando el reloj con el `next_market_end` que
+    guardó el tick anterior a partir del `expirationDate` de los anuncios
+    (`snipe.next_market_close`), así que se adapta sola a una liga con un cierre al día, dos, o
+    el ciclo que tenga (2026-09-23, arreglo del problema del horario de mercado: antes asumía
+    siempre las 21:00). El informe diario completo ya NO tiene una hora fija tampoco
+    (`REPORT_HOUR` se quitó, 2026-09-23): se manda justo después del ÚLTIMO cierre de mercado de
+    cada día natural (si la liga cierra dos veces al día, solo tras el segundo, para que salga
+    con datos frescos) — se sabe que un cierre es "el último de hoy" comparando su fecha (hora de
+    España) con la del PRÓXIMO cierre que ya conocemos: si cae otro día, o no hay próximo
+    conocido todavía, este era el último. Dedup por fecha de calendario del cierre procesado, no
+    por "hoy" al ejecutar el tick, para que un tick con retraso que cruce medianoche no lo mande
+    dos veces ni se lo salte."""
     now_utc = datetime.now(timezone.utc)
     now = _madrid_now()
     today = now.strftime("%Y-%m-%d")
-    daily_due = now.hour >= s.report_hour and store.get("last_daily") != today
 
     # `next_market_end` es el cierre que YA conocíamos del tick anterior: si ya lo hemos pasado y
     # todavía no se ha procesado ESE cierre concreto (dedup por su propio instante, no por el día
@@ -593,8 +608,9 @@ def _watch_once(store: Store, s) -> str:
     market_due = _market_cycle_due(prev_close_raw, now_utc, store.get("last_market_close_processed"))
     force_flip = os.environ.get("FLIP_FORCE_BUY") == "1"
     api = FantasyAPI(s)
-    world = _world(api, s, trends=daily_due or market_due or force_flip)
+    world = _world(api, s, trends=market_due or force_flip)
 
+    next_close = None
     try:
         # Vuelve a mirar el mercado TAL CUAL está ahora (ya refrescado si acaba de cerrar) para
         # saber cuándo es el PRÓXIMO cierre, y lo guarda para el próximo tick. Si ese próximo
@@ -608,6 +624,13 @@ def _watch_once(store: Store, s) -> str:
                     store.set("snipe_armed", next_close.isoformat())
     except Exception as exc:
         print(f"[mercado] error detectando el próximo cierre: {exc}")
+
+    daily_due = False
+    closed_day = None
+    if market_due:
+        closed_at = datetime.fromisoformat(prev_close_raw)
+        closed_day = analysis.to_madrid(closed_at).strftime("%Y-%m-%d")
+        daily_due = _last_close_of_day(closed_at, next_close) and store.get("last_daily") != closed_day
     service.ensure_clause_trends(api, world, s)
     service.ensure_speculative_trends(api, world, s)
 
@@ -703,7 +726,7 @@ def _watch_once(store: Store, s) -> str:
         except Exception as exc:
             print(f"[aviso] sin saldo estimado de rivales: {exc}")
         notify.send_report(s, service.report_sections(world, s, news, store, rival_cash))
-        store.set("last_daily", today)
+        store.set("last_daily", closed_day)
     return (
         f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas · {len(fresh_hot)} especulativas · {len(tx)} movimientos"
         f"{f' · flip: {flip_note}' if flip_note else ''}"
@@ -750,7 +773,7 @@ def cmd_watch(args, s) -> None:
     if not notify.telegram_enabled(s):
         sys.exit("El modo watch necesita Telegram configurado en el .env")
     store = Store(s.db_file)
-    print(f"👀 Vigilando cada ~{s.watch_interval_min} min. Informe diario a las {s.report_hour}:00. Ctrl+C para salir.")
+    print(f"👀 Vigilando cada ~{s.watch_interval_min} min. Informe diario justo tras el último cierre de mercado de cada día. Ctrl+C para salir.")
     while True:
         try:
             print(_watch_once(store, s))

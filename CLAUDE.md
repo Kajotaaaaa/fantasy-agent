@@ -27,9 +27,17 @@ asume:
   el trabajo de rebaja de último segundo (`repository_dispatch` "fantasy-snipe",
   `cli._dispatch_repo_event`) en vez de depender de un cron a hora fija del Worker de Cloudflare
   (ese cron ya no existe, ver `worker/wrangler.toml`: solo queda el de cada hora, healthCheck).
-- `REPORT_HOUR` (informe diario) SÍ sigue siendo una hora fija a propósito: es preferencia del
-  usuario sobre cuándo quiere su resumen, no depende del mercado. `MARKET_STUDY_HOUR`/`_MINUTE`
-  se eliminaron (ya no tienen sentido: el estudio de mercado ahora se dispara solo).
+- `REPORT_HOUR` (informe diario) se eliminó (2026-09-23, segunda parte del arreglo): igual que el
+  estudio de mercado, tampoco tiene sentido una hora fija — si el mercado de tu liga cierra a las
+  12:00, esperar a una hora fija de la mañana puede mandarte el informe con datos de ANTES del
+  cierre, o dejarte sin él hasta el día siguiente. Ahora `cli._watch_once` manda el informe diario
+  justo después del ÚLTIMO cierre de cada día natural (si la liga cierra dos veces al día, tras
+  el segundo, no el primero): compara la fecha en hora de España del cierre que se acaba de
+  procesar contra la del PRÓXIMO cierre ya conocido — si cae otro día (o no hay próximo todavía),
+  este era el último de hoy. Dedup por la fecha del cierre procesado (`last_daily` en el Store),
+  no por "hoy" al ejecutar el tick, para que un tick con retraso que cruce medianoche no lo mande
+  dos veces ni se lo salte. `MARKET_STUDY_HOUR`/`_MINUTE` también se habían eliminado antes (ya
+  no tienen sentido: el estudio de mercado se dispara solo).
 
 ## Comprar una cláusula en el segundo en que se desbloquea (`clause_snipe.py`)
 Pedido del usuario: ser el primero en clausular. El vigilante de 30 min y el botón normal (20-60

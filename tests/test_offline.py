@@ -495,6 +495,33 @@ class Tests(unittest.TestCase):
             os.environ.clear()
             os.environ.update(old_env)
 
+    def test_last_close_of_day_true_when_no_next_close_known(self):
+        """Sin próximo cierre todavía (p. ej. la API no devolvió ningún anuncio de LaLiga en ese
+        tick), se asume que el que se acaba de procesar es el último de hoy: mejor mandar el
+        informe que dejar al usuario sin él."""
+        from fantasy_agent import cli
+
+        self.assertTrue(cli._last_close_of_day(NOW, None))
+
+    def test_last_close_of_day_false_when_another_close_is_the_same_day(self):
+        """Liga con dos cierres el mismo día natural (hora de España): tras el primero, el
+        informe diario NO debe mandarse todavía — hay que esperar al segundo para que salga con
+        datos frescos."""
+        from fantasy_agent import cli
+
+        closed_at = NOW.replace(hour=8, minute=0, second=0, microsecond=0)
+        next_close = closed_at + timedelta(hours=12)  # mismo día en cualquier huso horario razonable
+        self.assertFalse(cli._last_close_of_day(closed_at, next_close))
+
+    def test_last_close_of_day_true_when_next_close_is_tomorrow(self):
+        """Liga con un cierre al día (o el segundo de dos): el próximo cierre conocido cae en
+        otra fecha, así que este SÍ es el último de hoy."""
+        from fantasy_agent import cli
+
+        closed_at = NOW.replace(hour=12, minute=0, second=0, microsecond=0)
+        next_close = closed_at + timedelta(hours=24)
+        self.assertTrue(cli._last_close_of_day(closed_at, next_close))
+
     def test_bid_plan(self):
         rising = analysis.Trend(2.0, 6.0, 12.0)
         plan = analysis.bid_plan(10_000_000, 10_000_000, rising, 7.5, 0.5, False)
