@@ -526,9 +526,17 @@ def cmd_section(args, s) -> None:
         for msg, buttons in messages:
             _out(s, msg, args.telegram, buttons=buttons)
         return
-    def arrivals() -> tuple[str, dict | None]:
-        text, buttons = service.market_arrivals_report(world, store)
-        return text or "Nada nuevo desde el último estudio.", buttons
+    if args.cmd == "market-news":
+        # Un mensaje de Telegram por jugador (igual que "report"), no uno solo larguísimo con
+        # todos los botones amontonados al final (2026-09-26, queja real del usuario).
+        sections = service.market_arrivals_report(world, store)
+        print("\n\n".join(text for text, _ in sections) or "Nada nuevo desde el último estudio.")
+        if args.telegram:
+            if sections:
+                notify.send_report(s, sections)
+            else:
+                notify.send_telegram(s, "Nada nuevo desde el último estudio.")
+        return
 
     def unlocks() -> tuple[str, dict | None]:
         text, buttons = service.unlocks_report(world)
@@ -568,7 +576,6 @@ def cmd_section(args, s) -> None:
             service.sell_candidates_report(world, store) or "Nadie con tendencia bajando ahora mismo.",
             service.sell_keyboard(world, store),
         ),
-        "market-news": arrivals,
         "listen": lambda: (
             lambda r: (r[0] or "Ningún jugador tuyo con la tendencia bajando ahora mismo.", r[1])
         )(service.offers_watch_report(world, store)),
@@ -709,9 +716,9 @@ def _watch_once(store: Store, s) -> str:
         notify.send_telegram(s, f"🤖 {service.b('Error en el flipeo')}\n{service.esc(str(exc))}")
 
     if market_due:
-        arrivals, arrivals_buttons = service.market_arrivals_report(world, store)
-        if arrivals:
-            notify.send_telegram(s, arrivals, buttons=arrivals_buttons)
+        arrivals_sections = service.market_arrivals_report(world, store)
+        if arrivals_sections:
+            notify.send_report(s, arrivals_sections)
         store.set("last_market_close_processed", prev_close_raw)
 
     if daily_due:

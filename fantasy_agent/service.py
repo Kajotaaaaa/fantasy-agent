@@ -581,14 +581,21 @@ def trends_report(world: World) -> str:
     return f"{b('📊 Tus jugadores: vender o mantener')}\n\n" + "\n".join(lines)
 
 
-def market_arrivals_report(world: World, store) -> tuple[str, dict | None]:
+def market_arrivals_report(world: World, store) -> list[tuple[str, dict | None]]:
     """Lo que ha entrado nuevo al mercado de LaLiga desde el último estudio (pensado para
     correr justo tras el cierre real de mercado de esta liga, sea cual sea su ciclo — ver
     `snipe.next_market_close`) con un veredicto propio para cada fichaje — no una lista
-    recortada por nota de corte, sino
-    "esto es lo fresco y esto es lo que opino de cada uno". Guarda qué ids ha visto para poder
-    distinguir "nuevo" de "ya lo vi ayer y sigue sin venderse". Devuelve (texto, teclado): solo
-    llevan botón de puja los que el veredicto valora con 3 estrellas o más."""
+    recortada por nota de corte, sino "esto es lo fresco y esto es lo que opino de cada uno".
+    Guarda qué ids ha visto para poder distinguir "nuevo" de "ya lo vi ayer y sigue sin venderse".
+
+    Un mensaje de Telegram POR JUGADOR, cada uno con su propio botón de puja justo debajo (solo
+    si el veredicto llega a 3 estrellas) — mismo criterio que `buy_sections` (2026-09-22): queja
+    real del usuario (2026-09-26, caso Adeyemi) de que esto salía como un solo mensaje larguísimo,
+    sin apenas saltos de línea entre motivos ni separación entre los botones de cada jugador, así
+    que no se entendía nada. Dentro de cada ficha, los motivos van uno por línea (antes iban
+    todos juntos separados por "·") y el veredicto y la conclusión quedan en su propia línea, en
+    vez de todo apretado. El título va pegado a la ficha del primer jugador, para no mandar un
+    mensaje suelto solo con la cabecera."""
     current = _biddable(world)
     seen = set(store.prefixed("market_seen:").keys())
     now_ids = {item.player.id for item in current}
@@ -598,7 +605,7 @@ def market_arrivals_report(world: World, store) -> tuple[str, dict | None]:
     for item in current:
         store.set(f"market_seen:{item.player.id}", "1")
     if not new_items:
-        return "", None
+        return []
 
     rows = []
     for item in new_items:
@@ -608,26 +615,29 @@ def market_arrivals_report(world: World, store) -> tuple[str, dict | None]:
         rows.append((stars, item, trend, label, reasons, take))
     rows.sort(key=lambda r: -r[0])
 
-    cards = []
-    for stars, item, trend, label, reasons, take in rows:
+    head = f"{b('🗞️ Nuevo en el mercado')}\n{i('Estudio de viabilidad')}"
+    sections: list[tuple[str, dict | None]] = []
+    for idx, (stars, item, trend, label, reasons, take) in enumerate(rows):
         p = item.player
         stars_str = "★" * stars + "☆" * (4 - stars)
-        primary, *rest = [esc(r) for r in reasons]
-        lines = [
-            f"{b(p.name)} <i>{p.position}·{esc(analysis.team_label(p.team))}</i> · {b(m(item.price))} · {stars_str}",
-            label, i(primary),
-        ]
-        if rest:
-            lines.append(i(" · ".join(rest)))
-        lines.append(i(analysis.trend_words(trend)))
-        lines.append(b(esc(take)))
-        cards.append("\n".join(lines))
-    head = f"{b('🗞️ Nuevo en el mercado')}\n{i('Estudio de viabilidad')}"
-    keyboard = _keyboard([
-        row for stars, item, trend, *_ in rows if stars >= 3
-        for row in _bid_rows(world, item, trend, item.player.id in world.league_top_ids)
-    ])
-    return head + "\n\n" + "\n".join(cards), keyboard
+        reason_lines = "\n".join(i(f"• {r}") for r in reasons)
+        text = "\n".join([
+            f"{b(p.name)} <i>{p.position} · {esc(analysis.team_label(p.team))}</i>",
+            f"💰 {b(m(item.price))} · {stars_str}",
+            "",
+            b(label),
+            "",
+            reason_lines,
+            "",
+            i(analysis.trend_words(trend)),
+            "",
+            b(take),
+        ])
+        if idx == 0:
+            text = f"{head}\n\n{text}"
+        kb = _keyboard(_bid_rows(world, item, trend, item.player.id in world.league_top_ids)) if stars >= 3 else None
+        sections.append((text, kb))
+    return sections
 
 
 def current_offers(api: FantasyAPI, world: World) -> dict[str, tuple[int, str]]:
@@ -1606,9 +1616,7 @@ def report_sections(
     ]
 
     if store is not None:
-        arrivals_text, arrivals_buttons = market_arrivals_report(world, store)
-        if arrivals_text:
-            sections.append((arrivals_text, arrivals_buttons))
+        sections += market_arrivals_report(world, store)
 
     sections += buy_sections(world, rival_cash=rival_cash)
 

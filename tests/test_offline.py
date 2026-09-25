@@ -230,6 +230,29 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertNotIn("todo tu dinero", rows[0][0]["text"])
 
+    def test_market_arrivals_report_is_one_message_per_player(self):
+        """Queja real del usuario (2026-09-26): "Nuevo en el mercado" salía como un solo mensaje
+        larguísimo, todo junto, sin apenas saltos de línea. Ahora es una lista de secciones (una
+        por jugador, como `buy_sections`), cada una con su propio botón de puja si llega a 3
+        estrellas, y con los motivos del veredicto en líneas separadas en vez de todo apretado."""
+        world = service.build_world(FakeAPI(), self.s)
+        store = Store(Path(tempfile.mkdtemp()) / "arrivals.sqlite3")
+
+        sections = service.market_arrivals_report(world, store)
+        by_text = {text: buttons for text, buttons in sections}
+        chollo_text = next(t for t in by_text if "Chollo" in t)
+        self.assertIn("Nuevo en el mercado", chollo_text)  # solo en el primer mensaje (cabecera pegada)
+        self.assertIn("• Rentable en puntos por millón", chollo_text)  # un motivo por línea, no juntos con "·"
+        self.assertIn("\n\n", chollo_text)  # saltos de línea reales entre bloques, no todo pegado
+        self.assertIsNotNone(by_text[chollo_text])  # "Chollo" llega a 3 estrellas con este fixture
+
+        lesionado_text = next(t for t in by_text if "Lesionado" in t)
+        self.assertNotIn("Nuevo en el mercado", lesionado_text)  # cabecera solo va en el primer mensaje
+        self.assertIsNone(by_text[lesionado_text])  # lesionado no llega a 3 estrellas: sin botón de puja
+
+        # Segunda pasada: ya se vieron, no se repiten (misma marca de agua que antes).
+        self.assertEqual(service.market_arrivals_report(world, store), [])
+
     def test_flip_breaker_and_offers_watch(self):
         from fantasy_agent import flip
 
