@@ -478,6 +478,12 @@ def cmd_set_webhook(args, s) -> None:
     print(json.dumps(notify.set_webhook(s, args.url, args.secret), ensure_ascii=False))
 
 
+def cmd_set_commands(args, s) -> None:
+    """Una sola vez (o cuando cambie `notify.COMMANDS`): registra el desplegable nativo de
+    comandos junto a la caja de texto de Telegram."""
+    print(json.dumps(notify.set_my_commands(s), ensure_ascii=False))
+
+
 def cmd_section(args, s) -> None:
     api = FantasyAPI(s)
     world = _world(
@@ -896,6 +902,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("url", help="URL pública del Worker desplegado")
     p.add_argument("secret", help="el mismo valor que TELEGRAM_WEBHOOK_SECRET del Worker")
     p.set_defaults(func=cmd_set_webhook)
+
+    sub.add_parser(
+        "set-commands", help="Registra el desplegable nativo de comandos de Telegram (una vez)",
+    ).set_defaults(func=cmd_set_commands)
 
     p = sub.add_parser("execute-action", help="Interno: ejecuta una acción del botón de Telegram (sin vista previa)")
     p.add_argument("action", help='código de acción, p.ej. "c:2206"')

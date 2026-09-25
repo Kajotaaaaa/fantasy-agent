@@ -81,6 +81,25 @@ def set_webhook(settings: Settings, url: str, secret_token: str) -> dict:
     )
 
 
+# El único comando de texto que el Worker entiende de verdad (ver `worker/telegram-webhook.js`,
+# solo mira `msg.text === "/menu"`) -- una sola cuenta, sin flujo de "/start" como sniperfantasy,
+# así que no tiene sentido listar más comandos de los que hacen algo al pulsarlos.
+COMMANDS = [{"command": "menu", "description": "Abrir el panel de consultas"}]
+
+
+def set_my_commands(settings: Settings, commands: list[dict] | None = None) -> dict:
+    """Registra el desplegable nativo de comandos (icono "/" junto a la caja de texto en
+    Telegram) -- de solo lectura para Telegram, una llamada de una vez, como `set_webhook`; no
+    hace falta repetirla salvo que cambie la lista. Sin argumento usa `COMMANDS`."""
+    if not telegram_enabled(settings):
+        raise RuntimeError("Configura TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID en el .env")
+    return request_json(
+        "POST",
+        f"https://api.telegram.org/bot{settings.telegram_token}/setMyCommands",
+        json_body={"commands": commands if commands is not None else COMMANDS},
+    )
+
+
 def send_report(settings: Settings, sections: list[tuple[str, dict | None]]) -> None:
     """Manda cada especialidad (alineación, mercado, cláusulas...) como un mensaje aparte,
     con sus botones si los lleva."""
