@@ -219,12 +219,14 @@ export default {
     }
 
     if (verb === "q") {
-      // Navegación por categorías (2026-09-26): no dispara nada, solo cambia qué teclado se ve
-      // (mismo patrón que "⬅️ Atrás" en `bot/menu_handler.py` de sniperfantasy) -- se manda un
-      // mensaje nuevo, no se edita el anterior, para no complicar el cableado de message_id.
+      // Navegación por categorías (2026-09-26, petición del usuario: "que se mueva hacia
+      // adelante y hacia atrás en el mismo menú"): no dispara nada, solo cambia qué teclado se
+      // ve -- se EDITA este mismo mensaje (editMessageText, ya tenemos el message_id de arriba),
+      // no se manda uno nuevo. El resto de consultas de verdad (informe, mercado...) sigue
+      // mandando mensaje nuevo, tiene sentido dejarlas en el historial del chat.
       if (payload === "home") {
         await answer();
-        await tg(env, "sendMessage", { chat_id, text: "☰ ¿Qué quieres consultar?", reply_markup: { inline_keyboard: TOP_MENU } });
+        await tg(env, "editMessageText", { chat_id, message_id, text: "☰ ¿Qué quieres consultar?", reply_markup: { inline_keyboard: TOP_MENU } });
         return new Response("ok");
       }
       if (payload.startsWith("cat:")) {
@@ -235,8 +237,8 @@ export default {
           return new Response("ok");
         }
         await answer();
-        await tg(env, "sendMessage", {
-          chat_id, text: `☰ ${category[0]}`, reply_markup: { inline_keyboard: categoryKeyboard(key) },
+        await tg(env, "editMessageText", {
+          chat_id, message_id, text: `☰ ${category[0]}`, reply_markup: { inline_keyboard: categoryKeyboard(key) },
         });
         return new Response("ok");
       }
