@@ -483,7 +483,8 @@ def cmd_section(args, s) -> None:
     world = _world(
         api, s,
         trends=args.cmd in (
-            "market", "trends", "report", "losses", "sell-candidates", "market-news", "listen", "bids", "clause-raise",
+            "market", "investment", "trends", "report", "losses", "sell-candidates", "market-news", "listen", "bids",
+            "clause-raise",
         ),
     )
     if args.cmd in ("clauses", "clauses-hot", "report"):
@@ -556,6 +557,7 @@ def cmd_section(args, s) -> None:
         "market": lambda: (
             service.market_report(world, rival_cash=rival_cash), service.market_keyboard(world, rival_cash=rival_cash),
         ),
+        "investment": lambda: (service.investment_report(world) or "Nada que compense comprar y revender hoy.", None),
         "trends": lambda: (service.trends_report(world), None),
         "rivals": lambda: (service.rivals_report(world, rival_cash), None),
         "clause-risk": lambda: (
@@ -812,6 +814,7 @@ def main(argv: list[str] | None = None) -> None:
 
     for name, help_ in [
         ("market", "Oportunidades de mercado"),
+        ("investment", "Oportunidades de inversión: comprar y revender, no para tu once"),
         ("trends", "Tus jugadores: cuáles conviene vender ya"),
         ("rivals", "Resumen de rivales"),
         ("clauses", "Alarmas de cláusulas"),
