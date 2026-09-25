@@ -198,6 +198,38 @@ class Tests(unittest.TestCase):
         # El flipeo no toca un anuncio donde ya hay una puja tuya.
         self.assertEqual(flip.plan_bids([(item, analysis.Trend(2.0, 4.0, 8.0))], 100_000_000, 0, [], set(), 0), [])
 
+    def test_bid_rows_offers_all_cash_when_margin_and_max_dont_fit(self):
+        """Caso real (Adeyemi, 2026-09-26): una buena oportunidad puede calcular un "margen" y un
+        "máximo" que superan lo que el usuario tiene disponible. Antes eso dejaba solo el botón de
+        mínimo, sin más opción aunque quedara dinero de sobra por encima del mínimo -- ahora se
+        ofrece pujar TODO el saldo disponible, dejando siempre claro en el texto que es el dinero
+        entero, no una cantidad calculada."""
+        import dataclasses
+
+        world = service.build_world(FakeAPI(), self.s)
+        item = next(i for i in world.market if i.player.id == "m1")  # "Chollo", en subida
+        trend = world.trends["m1"][1]
+        plan = service._plan_for(world, item, trend, False)
+        self.assertTrue(plan.margin and plan.max_bid)  # esta oportunidad SÍ calcula margen y máximo
+        self.assertGreater(plan.margin, plan.minimum)
+
+        # Saldo entre el mínimo y el margen: no llega para "con margen" ni "máximo".
+        poor_world = dataclasses.replace(world, my_cash=plan.minimum + 500_000)
+        rows = service._bid_rows(poor_world, item, trend, False)
+        texts = [r[0]["text"] for r in rows]
+        self.assertEqual(len(rows), 2)  # mínimo + todo el dinero (no margen/máximo, no llegan)
+        self.assertIn(f"mínimo {service.m(plan.minimum)}", texts[0])
+        self.assertIn("todo tu dinero", texts[1])
+        self.assertIn(service.m(poor_world.my_cash), texts[1])
+        self.assertEqual(rows[1][0]["callback_data"], f"b:{item.listing_id}:{poor_world.my_cash}")
+
+        # Si el saldo no llega ni siquiera para superar el mínimo, no tiene sentido ofrecer
+        # "todo tu dinero" (sería exactamente lo mismo que el botón de mínimo).
+        broke_world = dataclasses.replace(world, my_cash=plan.minimum)
+        rows = service._bid_rows(broke_world, item, trend, False)
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("todo tu dinero", rows[0][0]["text"])
+
     def test_flip_breaker_and_offers_watch(self):
         from fantasy_agent import flip
 

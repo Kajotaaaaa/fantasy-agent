@@ -417,7 +417,12 @@ def _bid_rows(
     claramente el margen). La cantidad viaja en el propio código ("b:<anuncio>:<cantidad>"): lo
     que confirmas es exactamente lo que se puja, aunque la tendencia cambie entre que se manda
     el aviso y pulsas. Nunca ofrece una puja que no te llega de saldo (regla del usuario:
-    prohibido quedarse en negativo)."""
+    prohibido quedarse en negativo).
+    Si el saldo no llega para "margen"/"máximo" pero sí queda algo por encima del mínimo, se
+    ofrece pujar TODO el saldo disponible en vez de dejar solo el mínimo (caso real, Adeyemi,
+    2026-09-26: buena oportunidad pero solo salía el botón de mínimo por no llegar al máximo
+    calculado) — el texto del botón avisa siempre de que es todo el dinero, para que quede claro
+    que no es una cantidad "calculada", es simplemente lo último que hay."""
     if not item.listing_id:
         return []
     plan = _plan_for(world, item, trend, is_top, with_ceiling, rival_cash)
@@ -427,6 +432,13 @@ def _bid_rows(
     if plan.max_bid:
         options.append(("🏆", "máximo", plan.max_bid))
     affordable = [(icon, tag, amount) for icon, tag, amount in options if world.my_cash is None or amount <= world.my_cash]
+    if (
+        world.my_cash is not None
+        and len(affordable) < len(options)
+        and world.my_cash > plan.minimum
+        and all(amount != world.my_cash for _, _, amount in affordable)
+    ):
+        affordable.append(("⚠️", "todo tu dinero", world.my_cash))
     if item.my_bid_id:
         # Ya hay una puja tuya pendiente: un segundo POST da error (030.01.09), lo que se puede
         # hacer es CAMBIAR su cantidad (PUT .../bid/{id}); código "u:<anuncio>:<puja>:<cantidad>".
