@@ -502,6 +502,42 @@ def market_keyboard(world: World, min_score: float = 8.0, rival_cash: dict[str, 
     ])
 
 
+def market_data(world: World, min_score: float = 8.0, rival_cash: dict[str, int] | None = None) -> dict:
+    """Igual que `market_report`, pero como estructura de datos en vez de texto de Telegram —
+    para el panel web (Fase 1, 2026-09-27, ver CLAUDE.md). Reutiliza exactamente las mismas
+    funciones de selección/puntuación que el informe (`_opportunities`, `_market_picks`,
+    `_market_study_picks`, `_plan_for`): cero lógica duplicada, solo cambia el formato de salida."""
+    scored = {o.item.listing_id: o for o in _opportunities(world)}
+    picks = _market_picks(world, min_score)
+    study_only = False
+    if not picks:
+        picks = _market_study_picks(world)
+        study_only = True
+    items = []
+    for item, trend, is_top in picks:
+        p = item.player
+        plan = _plan_for(world, item, trend, is_top, rival_cash=rival_cash)
+        opp = scored.get(item.listing_id)
+        items.append({
+            "listing_id": item.listing_id,
+            "player": {
+                "id": p.id, "name": p.name, "position": p.position, "team": p.team,
+                "market_value": p.market_value, "avg_points": p.avg_points, "status": p.status,
+            },
+            "price": item.price,
+            "is_top": is_top,
+            "score": round(opp.score, 1) if opp else None,
+            "reasons": opp.reasons if opp else [],
+            "expires": item.expires.isoformat() if item.expires else None,
+            "trend": {"d1": trend.d1, "d3": trend.d3, "d7": trend.d7},
+            "bid": {
+                "minimum": plan.minimum, "margin": plan.margin, "expected": plan.expected,
+                "max_bid": plan.max_bid, "max_reason": plan.max_reason,
+            },
+        })
+    return {"cash": world.my_cash, "study_only": study_only, "items": items}
+
+
 def _investment_card(
     world: World, item: models.MarketItem, trend: analysis.Trend, rival_cash: dict[str, int] | None = None,
 ) -> tuple[str, dict | None]:

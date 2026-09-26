@@ -10,7 +10,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from . import analysis, auth, clause_snipe, flip, models, notify, service, snipe
+from . import analysis, auth, clause_snipe, flip, models, notify, service, snipe, webapp
 from .api import FantasyAPI
 from .attendance import estimate_titularidad
 from .config import load_settings
@@ -788,6 +788,11 @@ def cmd_watch(args, s) -> None:
     if not notify.telegram_enabled(s):
         sys.exit("El modo watch necesita Telegram configurado en el .env")
     store = Store(s.db_file)
+    # Panel web, Fase 1 (2026-09-27): mismo proceso que ya vive siempre encendido en la Pi, un
+    # hilo de fondo de más no necesita tocar el systemd (ver deploy/fantasy-watch.service).
+    if s.web_port:
+        webapp.start_background(s)
+        print(f"🌐 Panel web en el puerto {s.web_port} (/app/).")
     print(f"👀 Vigilando cada ~{s.watch_interval_min} min. Informe diario justo tras el último cierre de mercado de cada día. Ctrl+C para salir.")
     while True:
         try:
@@ -798,6 +803,11 @@ def cmd_watch(args, s) -> None:
             print(f"[{datetime.now():%H:%M}] error: {exc}")
         # Intervalo con algo de aleatoriedad para no pegar peticiones a hora fija.
         time.sleep(s.watch_interval_min * 60 * random.uniform(0.85, 1.15))
+
+
+def cmd_serve(args, s) -> None:
+    """Solo el panel web (Fase 1), sin la vigilancia — para probarlo suelto."""
+    webapp.serve_forever(s)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -913,6 +923,7 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("watch", help="Vigilancia continua con alertas por Telegram").set_defaults(func=cmd_watch)
     sub.add_parser("tick", help="Una sola pasada de vigilancia (para cron / GitHub Actions)").set_defaults(func=cmd_tick)
+    sub.add_parser("serve", help="Solo el panel web (Fase 1), sin la vigilancia — para probarlo suelto").set_defaults(func=cmd_serve)
 
     args = parser.parse_args(argv)
     settings = load_settings()

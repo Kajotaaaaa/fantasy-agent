@@ -40,6 +40,7 @@ class Settings:
     watch_interval_min: int
     request_delay_s: float
     flip_mode: str  # "on" | "shadow" | cualquier otra cosa = apagado (ver flip.py)
+    web_port: int  # puerto del panel web (Fase 1, ver webapp.py) — 0 = no arrancar el servidor
 
     @property
     def tokens_file(self) -> Path:
@@ -67,4 +68,5 @@ def load_settings() -> Settings:
         watch_interval_min=int(os.environ.get("WATCH_INTERVAL_MIN", "30")),
         request_delay_s=float(os.environ.get("REQUEST_DELAY_S", "0.4")),
         flip_mode=(os.environ.get("FLIP_MODE") or "off").strip().lower(),
+        web_port=int(os.environ.get("WEB_PORT", "8787")),
     )

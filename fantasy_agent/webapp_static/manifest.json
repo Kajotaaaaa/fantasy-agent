@@ -1,0 +1,9 @@
+{
+  "name": "Fantasy Agent — Panel",
+  "short_name": "Fantasy Agent",
+  "start_url": "/app/",
+  "scope": "/app/",
+  "display": "standalone",
+  "background_color": "#08090a",
+  "theme_color": "#08090a"
+}

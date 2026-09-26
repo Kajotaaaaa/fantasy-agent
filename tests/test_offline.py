@@ -156,6 +156,40 @@ class Tests(unittest.TestCase):
         report = service.sell_candidates_report(world, store)
         self.assertIn("ya en venta", report)
 
+    def test_market_data_shape_and_real_values(self):
+        # Panel web, Fase 1 (2026-09-27): `market_data` es la misma selección que `market_report`
+        # en forma de dict, para el nuevo endpoint JSON — nada mockeado, mismos datos de FakeAPI.
+        world = service.build_world(FakeAPI(), self.s)
+        data = service.market_data(world)
+        self.assertEqual(data["cash"], 60_000_000)
+        self.assertFalse(data["study_only"])
+        names = {it["player"]["name"] for it in data["items"]}
+        self.assertIn("Chollo", names)
+        self.assertNotIn("NoEsPujable", names)  # no pujable: no debe salir (igual que en el texto)
+
+        chollo = next(it for it in data["items"] if it["player"]["name"] == "Chollo")
+        self.assertEqual(chollo["price"], 9_000_000)         # precio pedido del anuncio (crudo)
+        self.assertEqual(chollo["bid"]["minimum"], 10_000_000)  # mayor entre precio y valor de mercado
+        self.assertEqual(chollo["player"]["position"], "MED")
+        self.assertEqual(chollo["player"]["status"], "ok")
+        self.assertGreater(chollo["trend"]["d1"], 0)  # Chollo (m1) sube un 2%/día en FakeAPI
+
+    def test_market_data_reasons_carry_real_negative_signals(self):
+        from dataclasses import replace
+
+        world = service.build_world(FakeAPI(), self.s)
+        broke = replace(world, my_cash=1)  # fuerza la señal real "no te llega el saldo"
+        data = service.market_data(broke)
+        chollo = next(it for it in data["items"] if it["player"]["name"] == "Chollo")
+        self.assertIn("no te llega el saldo", chollo["reasons"])
+
+    def test_market_data_matches_market_report_picks(self):
+        world = service.build_world(FakeAPI(), self.s)
+        data = service.market_data(world)
+        report_names = {item.player.name for item, _, _ in service._market_picks(world)}
+        data_names = {it["player"]["name"] for it in data["items"]}
+        self.assertEqual(report_names, data_names)
+
     def test_my_transactions_alerts_on_rival_sale(self):
         # El usuario pidió enterarse cuando un rival vende a alguien de su plantilla (le sube
         # el saldo, más margen para pagarle cláusulas o ganarle pujas) — mismo feed de

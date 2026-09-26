@@ -23,7 +23,8 @@ se desbloquea o te pueden clausular a uno de los tuyos.
 | `clauses` | 🔓 cláusulas rivales que se desbloquean pronto · 💰 cláusulas que puedes pagar ya · 🛡️ tus jugadores en riesgo |
 | `lineup --news` | Once legal con más puntos esperados, con el próximo rival de cada jugador (🏠/✈️) |
 | `report --news --telegram` | Todo lo anterior, en un mensaje de Telegram por especialidad (alineación / mercado / cláusulas), no un tocho único |
-| `watch` | Vigilancia continua: alertas nuevas cada ~30 min + informe diario |
+| `watch` | Vigilancia continua: alertas nuevas cada ~30 min + informe diario (también sirve el panel web, ver abajo) |
+| `serve` | Solo el panel web (Fase 1: Mercado), sin la vigilancia — para probarlo suelto |
 
 El mercado separa dos cosas distintas: oportunidades **para tu once** (puntos por millón, medias)
 y una lista aparte 💹 **para invertir** (comprar barato y revender: solo mira si está en subida y

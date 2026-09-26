@@ -11,7 +11,10 @@
 //   "N:b:<id>"   "Cancelar"              -> la fila vuelve a su botón original
 //
 // Secretos (npx wrangler secret put <NOMBRE>):
-//   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET, GITHUB_TOKEN, GITHUB_REPO
+//   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET, GITHUB_TOKEN, GITHUB_REPO,
+//   DASHBOARD_TOKEN_SECRET (igual que en el .env de la Pi), APP_BASE_URL (panel web, Fase 1,
+//   2026-09-27 -- p.ej. "http://192.168.1.50:8787", la IP local de la Pi mientras solo se prueba
+//   en casa; si algún día se expone hacia fuera con un túnel, solo cambia este valor)
 
 // Cada verbo con el formato de su payload: la puja lleva "<anuncio>:<cantidad>" (la cantidad
 // exacta que enseña el botón); el resto, solo un id. "q" es distinto: no es un id, es el nombre
@@ -64,8 +67,9 @@ const PAYLOADS = {
   o: /^\d{1,12}:\d{1,12}:\d{1,12}$/, // aceptar oferta: "<jugador>:<oferta>:<importe>"
   r: /^\d{1,12}:\d{1,12}$/, // rechazar oferta: "<jugador>:<oferta>"
   // consulta del menú "/menu": "home"/"cat:<categoría>" son navegación pura (no disparan nada,
-  // solo cambian qué teclado se ve); el resto son los nombres de comando reales de la CLI.
-  q: new RegExp(`^(home|cat:(${Object.keys(CATEGORIES).join("|")})|${Object.keys(REPORT_LABELS).join("|")})$`),
+  // solo cambian qué teclado se ve); "webapp" manda el link del panel (tampoco dispara ningún
+  // workflow); el resto son los nombres de comando reales de la CLI.
+  q: new RegExp(`^(home|webapp|cat:(${Object.keys(CATEGORIES).join("|")})|${Object.keys(REPORT_LABELS).join("|")})$`),
 };
 // Qué workflow lanza cada verbo al confirmar: por defecto el corto de acciones (fantasy-action);
 // armar una cláusula espera hasta el desbloqueo, así que va a su propio trabajo largo; una
@@ -80,9 +84,26 @@ const CONFIRM_PREFIX = "✅ Confirmar · ";
 // doble confirmación de las acciones que mueven dinero (ver más abajo, verbo "q"). Las categorías
 // no disparan nada: solo cambian el teclado que se ve (igual que "⬅️ Atrás").
 const TOP_MENU = [
+  [{ text: "🌐 Abrir panel (mercado)", callback_data: "q:webapp" }],
   [{ text: REPORT_LABELS.report, callback_data: "q:report" }],
   ...Object.entries(CATEGORIES).map(([key, [label]]) => [{ text: label, callback_data: `q:cat:${key}` }]),
 ];
+
+// Token del panel web (Fase 1, 2026-09-27, ver CLAUDE.md): mismo esquema HMAC-SHA256 que
+// `fantasy_agent/dashboard_token.py` ("dash.<caducidad>" firmado con DASHBOARD_TOKEN_SECRET,
+// el mismo secreto en el .env de la Pi y aquí como secreto del Worker) -- se calcula aquí mismo
+// con Web Crypto en vez de llamar a la Pi, porque el Worker no tiene forma de alcanzarla sin
+// exponerla más (y esto solo se emite al propio dueño del chat, ya comprobado más arriba).
+const DASH_TOKEN_TTL = 90 * 24 * 3600;
+async function issueDashboardToken(secret) {
+  const expiresAt = Math.floor(Date.now() / 1000) + DASH_TOKEN_TTL;
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const sigBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`dash.${expiresAt}`));
+  const hex = [...new Uint8Array(sigBuf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${expiresAt}.${hex}`;
+}
 
 function categoryKeyboard(key) {
   const [, actions] = CATEGORIES[key];
@@ -227,6 +248,19 @@ export default {
       if (payload === "home") {
         await answer();
         await tg(env, "editMessageText", { chat_id, message_id, text: "☰ ¿Qué quieres consultar?", reply_markup: { inline_keyboard: TOP_MENU } });
+        return new Response("ok");
+      }
+      if (payload === "webapp") {
+        await answer("Panel listo");
+        const token = await issueDashboardToken(env.DASHBOARD_TOKEN_SECRET);
+        const url = `${(env.APP_BASE_URL || "").replace(/\/$/, "")}/app/?token=${token}`;
+        await tg(env, "sendMessage", {
+          chat_id, text:
+            `🌐 Abre tu panel aquí:\n${url}\n\n` +
+            "Guárdalo o añádelo a la pantalla de inicio de tu móvil — no hace falta que " +
+            "vuelvas a pedirlo salvo que caduque (dura 90 días). Necesitas estar en la misma " +
+            "red que la Raspberry Pi, salvo que hayas montado un túnel hacia fuera.",
+        });
         return new Response("ok");
       }
       if (payload.startsWith("cat:")) {

@@ -706,10 +706,64 @@ medio bloque, para no cortar una etiqueta HTML por la mitad.
 - `lineup.py`   mejor once legal por puntos esperados
 - `attendance.py` estima % de titularidad por histórico de jornadas jugadas (gratis, sin APIs externas)
 - `service.py`  construye el estado de la liga (incl. próximos partidos vía `calendar`) y los informes de texto;
-  `report_sections()` devuelve un mensaje por especialidad para Telegram (no un solo tocho)
-- `cli.py`      comandos, bucle `watch` y `tick` (una pasada, para GitHub Actions/cron)
+  `report_sections()` devuelve un mensaje por especialidad para Telegram (no un solo tocho);
+  `market_data()` es lo mismo que `market_report()` pero en dict, para el panel web (ver abajo)
+- `dashboard_token.py` token firmado del panel web (sin tenant: una sola cuenta)
+- `webapp.py`   servidor HTTP del panel web (solo librería estándar), hilo de fondo de `cmd_watch`
+- `webapp_static/` HTML/CSS del panel (Fase 1: solo Mercado)
+- `cli.py`      comandos, bucle `watch` y `tick` (una pasada, para GitHub Actions/cron), `serve` (solo el panel, suelto)
 - `.github/workflows/watch.yml` ejecuta `tick` cada ~30 min en GitHub Actions (repo público, estado en `actions/cache`)
 - `tests/`      `python -m unittest discover -s tests -v` (sin red, API falsa)
+
+## Panel web, Fase 1 — módulo de Mercado (2026-09-27)
+Mismo pivote de producto que en sniperfantasy (proyecto hermano): el usuario, usando el bot de
+verdad, lo vio "cutre, poco funcional" por los tochos de texto de Telegram y pidió una vista web
+ligera, reutilizando el lenguaje visual de tarjetas — Telegram queda como canal de alertas y de
+acción (pujar sigue siendo solo por Telegram, con su doble confirmación ya construida), la web
+es para CONSULTAR con calma. Se pidió explícitamente ir fase por fase, empezando por Mercado, y
+que esta primera fase deje terreno listo para las siguientes sin refactorizar.
+
+**Diferencia clave con sniperfantasy:** aquí no hay tenants ni servidor siempre-encendido con
+FastAPI — es una sola cuenta, `SOLO LECTURA` y `solo librería estándar` (regla del proyecto), y
+el único proceso que vive siempre encendido es el `watch` de `deploy/fantasy-watch.service` en la
+Raspberry Pi del usuario. Decisiones:
+- **Servidor: `http.server.ThreadingHTTPServer` de la librería estándar** (`webapp.py`), NO
+  Flask/FastAPI — mantiene la regla "solo librería estándar" de este proyecto (a diferencia de
+  sniperfantasy, que sí tiene FastAPI). Arranca como HILO DE FONDO dentro de `cmd_watch`
+  (`webapp.start_background`): el proceso que ya corre siempre en la Pi gana un puerto HTTP sin
+  tocar el systemd. `python -m fantasy_agent serve` lo arranca suelto (primer plano) para probar
+  sin la vigilancia entera. `WEB_PORT=0` lo desactiva del todo.
+- **Token (`dashboard_token.py`): HMAC-SHA256 firmado, SIN tenant_id** (a diferencia del
+  `auth/dashboard_token.py` de sniperfantasy, que sí lleva tenant_id) — aquí solo hay una cuenta,
+  así que el token solo prueba "esto lo emitió quien conoce `DASHBOARD_TOKEN_SECRET`". 90 días de
+  validez, pensado para vivir en el móvil (`localStorage`) sin volver a pedirlo.
+- **El link se genera EN EL WORKER de Cloudflare, no en la Pi.** El botón "🌐 Abrir panel" del
+  `/menu` (`worker/telegram-webhook.js`, payload `q:webapp`) calcula el token con Web Crypto
+  (`crypto.subtle`, HMAC-SHA256) usando el secreto `DASHBOARD_TOKEN_SECRET` del propio Worker —
+  el MISMO valor que el `.env` de la Pi, pero sin que el Worker tenga que llamar a la Pi para
+  pedírselo (el Worker no tiene ninguna vía para alcanzar una Raspberry Pi doméstica sin montar
+  ya un túnel). El resultado se manda al primer toque, sin la doble confirmación de las acciones
+  que mueven dinero — es una consulta, no una escritura.
+- **Sin exponer la Pi a internet todavía, a propósito.** `APP_BASE_URL` (secreto del Worker)
+  apunta a la IP local de la Pi (p. ej. `http://192.168.1.50:8787`): sirve para probar desde el
+  móvil en la misma red de casa, sin decidir todavía si compensa montar un túnel (Cloudflare
+  Tunnel es la opción natural si el usuario quiere acceso desde fuera más adelante — mismo
+  proveedor que ya usa para el Worker, gratis, sin abrir puertos del router). Decisión deliberada
+  (2026-09-27, "quiero ver las posibilidades que tiene esto"): no montar infraestructura de más
+  antes de validar que el panel compensa.
+- **Backend: `service.market_data()`** reutiliza EXACTAMENTE las mismas funciones que
+  `market_report()` (`_opportunities`, `_market_picks`, `_market_study_picks`, `_plan_for`,
+  `bid_amount`) — cero lógica duplicada, solo cambia dict vs texto de Telegram.
+- **Frontend (`webapp_static/`):** vanilla HTML/CSS/JS, sin build ni dependencias — mismo motivo
+  que el resto del proyecto (mínima superficie, nada que instalar en la Pi). Sin selector de
+  liga (a diferencia de sniperfantasy): una sola cuenta, una sola liga.
+- **Deliberadamente NO en esta pasada:** pujar desde la web (los importes se enseñan como texto,
+  no como botón — pujar sigue siendo solo Telegram, que ya tiene la doble confirmación); construir
+  el panel completo (Alineación, Cláusulas, Rivales) — el usuario pidió ir fase por fase; exponer
+  el servidor fuera de la red local.
+- **Terreno dejado listo para las siguientes fases:** el patrón token+endpoint+`webapp_static/`
+  ya está resuelto — un informe nuevo en el panel es una función `xxx_data()` en `service.py` más
+  una entrada en `_STATIC_FILES`/una ruta nueva en `webapp.do_GET`, sin inventar nada de cero.
 
 ## Primeros pasos tras el login real
 1. `probe /v1/competition/1/leagues`, `probe /v1/competition/1/leagues/<id>/standing`,

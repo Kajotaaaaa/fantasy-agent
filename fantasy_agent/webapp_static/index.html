@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Panel — Fantasy Agent</title>
+<meta name="description" content="Tu mercado de LaLiga Fantasy, en datos reales, sin textos interminables.">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#08090a">
+<link rel="manifest" href="/app/manifest.json">
+<link rel="stylesheet" href="/app/style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap">
+    <span class="brand"><span class="dot">◎</span>Fantasy Agent</span>
+    <span id="cash-note" class="mono muted"></span>
+  </div>
+</nav>
+
+<main class="wrap">
+
+  <div id="state-loading" class="mono muted center">
+    <div class="spinner"></div>
+    Cargando tu mercado…
+  </div>
+
+  <div id="state-error" class="callout danger" hidden></div>
+
+  <div id="state-no-session" class="callout" hidden>
+    <b>No encuentro tu sesión.</b> Abre este panel desde el enlace que te manda el bot de
+    Telegram (escribe <code>/menu</code> → "🌐 Abrir panel").
+  </div>
+
+  <div id="market-view" hidden>
+    <div class="section-head">
+      <span class="eyebrow">Mercado para tu once</span>
+      <h2>Oportunidades de hoy</h2>
+    </div>
+    <div id="study-note" class="callout" hidden></div>
+    <div id="mkt-list" class="mkt-list"></div>
+    <p class="hero-note">Para pujar, hazlo desde el aviso de Telegram — esta vista es de consulta.</p>
+  </div>
+
+</main>
+
+<script>
+  // Panel web, Fase 1 (2026-09-27, ver CLAUDE.md): "menos texto, más visual" -- puerto en el
+  // propio Raspberry Pi (fantasy_agent.webapp), sin tenant_id: una sola cuenta. El bot manda un
+  // link con un token firmado (dashboard_token.py, 90 días); esta página lo guarda una vez y no
+  // vuelve a pedirlo.
+  const API_BASE = location.origin;
+
+  const params = new URLSearchParams(location.search);
+  const urlToken = params.get("token");
+  if (urlToken) {
+    localStorage.setItem("fa_token", urlToken);
+    history.replaceState({}, "", location.pathname);
+  }
+  const token = urlToken || localStorage.getItem("fa_token");
+
+  const STATES = ["state-loading", "state-error", "state-no-session", "market-view"];
+  function show(id) {
+    STATES.forEach((s) => { document.getElementById(s).hidden = s !== id; });
+  }
+
+  function escapeHtml(s) {
+    const div = document.createElement("div");
+    div.textContent = s == null ? "" : String(s);
+    return div.innerHTML;
+  }
+
+  // Mismo formato que `service.m()` en el backend (Telegram): "12.34M".
+  function m(amount) {
+    if (amount === null || amount === undefined) return "?";
+    return (amount / 1_000_000).toFixed(2) + "M";
+  }
+
+  function trendBarHtml(pct) {
+    const cls = pct > 0.3 ? "hi" : pct < -0.3 ? "lo" : "";
+    const height = Math.max(10, Math.min(100, 30 + Math.abs(pct) * 5));
+    return `<span class="${cls}" style="height:${height}%"></span>`;
+  }
+
+  const POS_CLASS = { POR: "gk", DEF: "def", MED: "cen", DEL: "del" };
+
+  function renderItem(it) {
+    const p = it.player;
+    const posClass = POS_CLASS[p.position] || "";
+    const scoreVal = it.score === null || it.score === undefined ? "—" : it.score.toFixed(1);
+    const available = p.status === "ok";
+    const bidBits = [`Mín. ${m(it.bid.minimum)}`];
+    if (it.bid.margin) bidBits.push(`con margen ${m(it.bid.margin)}`);
+    if (it.bid.max_bid) bidBits.push(`máx. ${m(it.bid.max_bid)}`);
+    const reasonsHtml = it.reasons && it.reasons.length
+      ? `<div class="mkt-sub warn-row">⚠️ ${escapeHtml(it.reasons.join(" · "))}</div>`
+      : "";
+    const d3 = it.trend.d3;
+
+    return `
+      <div class="mkt-row">
+        <div class="mkt-head">
+          <div class="mkt-id">
+            <span class="pos-pill ${posClass}">${escapeHtml(p.position)}</span>
+            <span class="mkt-name">${it.is_top ? "🌟 " : ""}${escapeHtml(p.name)}</span>
+          </div>
+          <div class="mkt-score"><span class="lbl">Índice</span><span class="val">${scoreVal}</span></div>
+        </div>
+        <div class="mkt-sub">
+          <span class="${available ? "ok" : "warn"}">${available ? "✅ Disponible" : "⚠️ " + escapeHtml(p.status || "duda")}</span>
+          <span>💰 ${m(it.price)}</span>
+          <span>📈 ${p.avg_points.toFixed(1)} pts/partido</span>
+        </div>
+        ${reasonsHtml}
+        <div class="mkt-bars" title="Tendencia 1 / 3 / 7 días">${trendBarHtml(it.trend.d1)}${trendBarHtml(d3 / 2)}${trendBarHtml(it.trend.d7 / 3)}</div>
+        <div class="mkt-foot">
+          <span class="pct-tag ${d3 >= 0 ? "pos" : "neg"}">${d3 >= 0 ? "+" : ""}${d3.toFixed(1)}% en 3 días</span>
+          <span class="mono muted small">${escapeHtml(bidBits.join(" · "))}</span>
+        </div>
+      </div>`;
+  }
+
+  async function api(path) {
+    const url = new URL(API_BASE + path);
+    url.searchParams.set("token", token);
+    const res = await fetch(url);
+    if (!res.ok) {
+      let detail = `Error ${res.status}`;
+      try { detail = (await res.json()).detail || detail; } catch (e) {}
+      throw new Error(detail);
+    }
+    return res.json();
+  }
+
+  function showError(err) {
+    document.getElementById("state-error").textContent = "⚠️ " + err.message;
+    show("state-error");
+  }
+
+  async function loadMarket() {
+    show("state-loading");
+    try {
+      const data = await api("/app/api/market");
+      document.getElementById("cash-note").textContent = "Saldo: " + m(data.cash);
+
+      const studyNote = document.getElementById("study-note");
+      if (data.study_only) {
+        studyNote.hidden = false;
+        studyNote.textContent = "Nadie llega a la nota mínima ahora mismo — esto es lo mejor que hay igualmente, sin ser una recomendación en firme.";
+      } else {
+        studyNote.hidden = true;
+      }
+
+      const list = document.getElementById("mkt-list");
+      list.innerHTML = data.items.length
+        ? data.items.map(renderItem).join("")
+        : '<p class="mono muted center">No hay nada pujable en el mercado ahora mismo.</p>';
+      show("market-view");
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function bootstrap() {
+    if (!token) { show("state-no-session"); return; }
+    await loadMarket();
+  }
+
+  bootstrap();
+</script>
+</body>
+</html>
