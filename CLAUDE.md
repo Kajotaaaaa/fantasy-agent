@@ -723,47 +723,77 @@ acción (pujar sigue siendo solo por Telegram, con su doble confirmación ya con
 es para CONSULTAR con calma. Se pidió explícitamente ir fase por fase, empezando por Mercado, y
 que esta primera fase deje terreno listo para las siguientes sin refactorizar.
 
-**Diferencia clave con sniperfantasy:** aquí no hay tenants ni servidor siempre-encendido con
-FastAPI — es una sola cuenta, `SOLO LECTURA` y `solo librería estándar` (regla del proyecto), y
-el único proceso que vive siempre encendido es el `watch` de `deploy/fantasy-watch.service` en la
-Raspberry Pi del usuario. Decisiones:
+**No hay ninguna máquina propia siempre encendida** (nunca hubo Raspberry Pi: `deploy/
+fantasy-watch.service` es una plantilla para quien quiera self-hostearlo, no lo que corre hoy).
+La vigilancia real de este proyecto es `tick`, ejecuciones SUELTAS de GitHub Actions cada ~30 min
+(`watch.yml`) — nada vive encendido entre una y otra. Primera versión de esta sección (misma
+tarde, 2026-09-27) asumía por error que sí había una Pi corriendo `watch` en bucle; el usuario lo
+corrigió ("pero que raspberry si no tenemos ninguna rasp") y, preguntado cómo prefería probar el
+panel sin ningún servidor propio, eligió desplegar un servicio gratuito siempre encendido (ver
+opciones que se le dieron: local en su PC / servicio gratuito tipo Render / esperar).
+
+**Diseño resultante — dos procesos independientes, uno solo puede tocar la sesión:**
+- **`render.yaml`**: un `Web Service` en Render (plan free) que corre `python -m fantasy_agent
+  serve` — proceso SEPARADO del tick de GitHub Actions, dedicado solo a servir el panel.
 - **Servidor: `http.server.ThreadingHTTPServer` de la librería estándar** (`webapp.py`), NO
   Flask/FastAPI — mantiene la regla "solo librería estándar" de este proyecto (a diferencia de
-  sniperfantasy, que sí tiene FastAPI). Arranca como HILO DE FONDO dentro de `cmd_watch`
-  (`webapp.start_background`): el proceso que ya corre siempre en la Pi gana un puerto HTTP sin
-  tocar el systemd. `python -m fantasy_agent serve` lo arranca suelto (primer plano) para probar
-  sin la vigilancia entera. `WEB_PORT=0` lo desactiva del todo.
-- **Token (`dashboard_token.py`): HMAC-SHA256 firmado, SIN tenant_id** (a diferencia del
-  `auth/dashboard_token.py` de sniperfantasy, que sí lleva tenant_id) — aquí solo hay una cuenta,
-  así que el token solo prueba "esto lo emitió quien conoce `DASHBOARD_TOKEN_SECRET`". 90 días de
-  validez, pensado para vivir en el móvil (`localStorage`) sin volver a pedirlo.
-- **El link se genera EN EL WORKER de Cloudflare, no en la Pi.** El botón "🌐 Abrir panel" del
-  `/menu` (`worker/telegram-webhook.js`, payload `q:webapp`) calcula el token con Web Crypto
-  (`crypto.subtle`, HMAC-SHA256) usando el secreto `DASHBOARD_TOKEN_SECRET` del propio Worker —
-  el MISMO valor que el `.env` de la Pi, pero sin que el Worker tenga que llamar a la Pi para
-  pedírselo (el Worker no tiene ninguna vía para alcanzar una Raspberry Pi doméstica sin montar
-  ya un túnel). El resultado se manda al primer toque, sin la doble confirmación de las acciones
-  que mueven dinero — es una consulta, no una escritura.
-- **Sin exponer la Pi a internet todavía, a propósito.** `APP_BASE_URL` (secreto del Worker)
-  apunta a la IP local de la Pi (p. ej. `http://192.168.1.50:8787`): sirve para probar desde el
-  móvil en la misma red de casa, sin decidir todavía si compensa montar un túnel (Cloudflare
-  Tunnel es la opción natural si el usuario quiere acceso desde fuera más adelante — mismo
-  proveedor que ya usa para el Worker, gratis, sin abrir puertos del router). Decisión deliberada
-  (2026-09-27, "quiero ver las posibilidades que tiene esto"): no montar infraestructura de más
-  antes de validar que el panel compensa.
+  sniperfantasy, que sí tiene FastAPI). `_port()` lee `PORT` (Render lo inyecta solo) o, en
+  local, `WEB_PORT` del `.env`. `webapp.start_background` sigue existiendo por si alguien
+  prefiere correr `watch` en su propio ordenador en vez de un servicio en la nube.
+- **Problema real detectado al diseñar esto: dos refrescadores de sesión competirían por el
+  `refresh_token`.** Con un servicio de Render siempre vivo Y el tick de GitHub Actions
+  refrescando cada 30 min, ambos llamando a `auth.refresh()` por su cuenta sobre snapshots
+  desincronizados del token podría hacer que uno invalidara el `refresh_token` del otro si LaLiga
+  lo rota en cada uso (sin confirmar si lo rota o no — no vale la pena arriesgar la vigilancia
+  real para comprobarlo). Solución: **el tick de GitHub Actions sigue siendo el ÚNICO que
+  refresca.** `api.FantasyAPI(s, refresh_session=False)` (usado solo en `webapp.py`) llama a
+  `auth.bearer_readonly()` en vez de `auth.bearer()` — lee el token guardado, nunca lo refresca;
+  si está a punto de caducar, falla con un mensaje claro en vez de arriesgarse a refrescar.
+- **Empuje de sesión, no tirón:** tras cada `tick`, un paso nuevo en `watch.yml`
+  ("Sincronizar sesión con el panel web") hace `POST /internal/sync-tokens` con el
+  `data/tokens.json` recién refrescado, contra `APP_BASE_URL` (la URL pública del servicio de
+  Render), protegido por el secreto compartido `WEBAPP_SYNC_SECRET` (cabecera `X-Sync-Secret`,
+  comprobado en `webapp.py.do_POST`). Necesario porque el disco de Render en plan free es
+  EFÍMERO (se pierde al reiniciar/escalar a cero) — sin este empuje periódico, el panel se
+  quedaría con la sesión con la que arrancó la última vez y acabaría caducando sin remedio.
+  Efecto colateral bueno: esta llamada HTTP cada ~30 min también evita que el servicio gratuito
+  de Render se quede dormido por inactividad (se "duerme" tras ~15 min sin tráfico).
+- **Token del panel (`dashboard_token.py`): HMAC-SHA256 firmado, SIN tenant_id** (a diferencia
+  del `auth/dashboard_token.py` de sniperfantasy, que sí lleva tenant_id) — aquí solo hay una
+  cuenta, así que el token solo prueba "esto lo emitió quien conoce `DASHBOARD_TOKEN_SECRET`".
+  90 días de validez, pensado para vivir en el móvil (`localStorage`) sin volver a pedirlo. Es un
+  secreto DISTINTO de `WEBAPP_SYNC_SECRET` (uno protege el link del usuario, el otro protege el
+  empuje interno de sesión entre GitHub Actions y Render — nunca deben compartir valor).
+- **El link se genera EN EL WORKER de Cloudflare, no en Render.** El botón "🌐 Abrir panel" del
+  `/menu` (`worker/telegram-webhook.js`, payload `q:webapp`) calcula el token del panel con Web
+  Crypto (`crypto.subtle`, HMAC-SHA256) usando el secreto `DASHBOARD_TOKEN_SECRET` del propio
+  Worker — el MISMO valor que la variable de entorno del servicio de Render, sin que el Worker
+  tenga que llamarlo para pedírselo. Se manda al primer toque, sin la doble confirmación de las
+  acciones que mueven dinero — es una consulta, no una escritura. `APP_BASE_URL` (secreto del
+  Worker) es la URL pública de Render (p. ej. `https://fantasy-agent-web.onrender.com`).
 - **Backend: `service.market_data()`** reutiliza EXACTAMENTE las mismas funciones que
   `market_report()` (`_opportunities`, `_market_picks`, `_market_study_picks`, `_plan_for`,
   `bid_amount`) — cero lógica duplicada, solo cambia dict vs texto de Telegram.
-- **Frontend (`webapp_static/`):** vanilla HTML/CSS/JS, sin build ni dependencias — mismo motivo
-  que el resto del proyecto (mínima superficie, nada que instalar en la Pi). Sin selector de
-  liga (a diferencia de sniperfantasy): una sola cuenta, una sola liga.
+- **Frontend (`webapp_static/`):** vanilla HTML/CSS/JS, sin build ni dependencias. Sin selector
+  de liga (a diferencia de sniperfantasy): una sola cuenta, una sola liga.
 - **Deliberadamente NO en esta pasada:** pujar desde la web (los importes se enseñan como texto,
   no como botón — pujar sigue siendo solo Telegram, que ya tiene la doble confirmación); construir
-  el panel completo (Alineación, Cláusulas, Rivales) — el usuario pidió ir fase por fase; exponer
-  el servidor fuera de la red local.
+  el panel completo (Alineación, Cláusulas, Rivales) — el usuario pidió ir fase por fase; que
+  Render refresque sesión por su cuenta (ver arriba, riesgo de carrera).
 - **Terreno dejado listo para las siguientes fases:** el patrón token+endpoint+`webapp_static/`
   ya está resuelto — un informe nuevo en el panel es una función `xxx_data()` en `service.py` más
   una entrada en `_STATIC_FILES`/una ruta nueva en `webapp.do_GET`, sin inventar nada de cero.
+- **Secretos nuevos, dónde van (los dos primeros deben coincidir EXACTAMENTE entre los dos
+  sitios que los usan; los otros dos son cosas nuevas cada uno):**
+  - `DASHBOARD_TOKEN_SECRET`: variable de entorno del servicio de Render + secreto
+    `DASHBOARD_TOKEN_SECRET` del Worker de Cloudflare (mismo valor en ambos).
+  - `WEBAPP_SYNC_SECRET`: variable de entorno del servicio de Render + secreto
+    `WEBAPP_SYNC_SECRET` del repositorio de GitHub (Settings > Secrets > Actions) (mismo valor
+    en ambos).
+  - `APP_BASE_URL`: secreto del Worker de Cloudflare Y secreto de GitHub Actions (mismo valor en
+    ambos: la URL pública del servicio de Render).
+  - `FANTASY_TOKENS_JSON` (ya existía, ver "Sembrar sesión inicial" en `watch.yml`): sin
+    cambios, sigue siendo solo el arranque en frío del propio tick.
 
 ## Primeros pasos tras el login real
 1. `probe /v1/competition/1/leagues`, `probe /v1/competition/1/leagues/<id>/standing`,

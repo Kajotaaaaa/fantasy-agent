@@ -76,3 +76,21 @@ jobs:
         with:
           path: data
           key: fantasy-state-${{ github.run_id }}
+
+      # Panel web, Fase 1 (2026-09-27, ver CLAUDE.md): el servicio de Render no tiene disco
+      # persistente (plan free) y NUNCA refresca la sesión por su cuenta (evita competir con este
+      # mismo tick por el refresh_token) -- se le empuja la sesión ya refrescada aquí, tras cada
+      # tick. No rompe la vigilancia si el panel está caído o si aún no se ha configurado
+      # (APP_BASE_URL vacío): el `|| echo` deja seguir el resto del workflow igual.
+      - name: Sincronizar sesión con el panel web
+        if: always()
+        run: |
+          if [ -s data/tokens.json ] && [ -n "$APP_BASE_URL" ]; then
+            curl -sf -X POST "$APP_BASE_URL/internal/sync-tokens" \
+              -H "X-Sync-Secret: $WEBAPP_SYNC_SECRET" -H "Content-Type: application/json" \
+              --data-binary @data/tokens.json \
+              || echo "⚠️ no se pudo sincronizar el panel web (seguirá con la sesión anterior)"
+          fi
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          WEBAPP_SYNC_SECRET: ${{ secrets.WEBAPP_SYNC_SECRET }}

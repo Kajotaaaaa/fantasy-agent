@@ -1,0 +1,20 @@
+# Panel web, Fase 1 (2026-09-27, ver CLAUDE.md): servicio propio siempre encendido en Render
+# (plan free) SOLO para servir el panel — la vigilancia real sigue siendo el tick de GitHub
+# Actions cada ~30 min, este servicio nunca refresca la sesión (ver webapp.py/auth.bearer_readonly).
+#
+# Despliegue: Render -> New -> Blueprint -> conecta este repo -> aplica. Luego, en el propio
+# servicio (Environment), añade a mano DASHBOARD_TOKEN_SECRET y WEBAPP_SYNC_SECRET (secretos, no
+# van en este archivo — ver CLAUDE.md para los valores exactos que también hacen falta en el
+# Worker de Cloudflare y en los secretos de GitHub Actions).
+services:
+  - type: web
+    name: fantasy-agent-web
+    runtime: python
+    plan: free
+    buildCommand: "true"  # sin dependencias (solo librería estándar)
+    startCommand: "python -m fantasy_agent serve"
+    envVars:
+      - key: DASHBOARD_TOKEN_SECRET
+        sync: false
+      - key: WEBAPP_SYNC_SECRET
+        sync: false

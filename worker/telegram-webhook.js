@@ -12,9 +12,9 @@
 //
 // Secretos (npx wrangler secret put <NOMBRE>):
 //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET, GITHUB_TOKEN, GITHUB_REPO,
-//   DASHBOARD_TOKEN_SECRET (igual que en el .env de la Pi), APP_BASE_URL (panel web, Fase 1,
-//   2026-09-27 -- p.ej. "http://192.168.1.50:8787", la IP local de la Pi mientras solo se prueba
-//   en casa; si algún día se expone hacia fuera con un túnel, solo cambia este valor)
+//   DASHBOARD_TOKEN_SECRET (panel web, Fase 1, 2026-09-27 -- el MISMO valor que el secreto
+//   DASHBOARD_TOKEN_SECRET del servicio de Render, ver CLAUDE.md), APP_BASE_URL (la URL pública
+//   del servicio de Render, p.ej. "https://fantasy-agent-web.onrender.com")
 
 // Cada verbo con el formato de su payload: la puja lleva "<anuncio>:<cantidad>" (la cantidad
 // exacta que enseña el botón); el resto, solo un id. "q" es distinto: no es un id, es el nombre
@@ -258,8 +258,9 @@ export default {
           chat_id, text:
             `🌐 Abre tu panel aquí:\n${url}\n\n` +
             "Guárdalo o añádelo a la pantalla de inicio de tu móvil — no hace falta que " +
-            "vuelvas a pedirlo salvo que caduque (dura 90 días). Necesitas estar en la misma " +
-            "red que la Raspberry Pi, salvo que hayas montado un túnel hacia fuera.",
+            "vuelvas a pedirlo salvo que caduque (dura 90 días). La sesión de LaLiga que ve el " +
+            "panel es la que refresca el vigilante cada ~30 min, así que puede tardar un rato en " +
+            "estar lista la primera vez que se activa.",
         });
         return new Response("ok");
       }

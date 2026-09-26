@@ -18,10 +18,18 @@ COMP = "/v1/competition/1"
 
 
 class FantasyAPI:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, refresh_session: bool = True):
         self.s = settings
         self._last_call = 0.0
         self._cache: dict[str, Any] = {}
+        # `refresh_session=False` (panel web, Fase 1, ver webapp.py): NUNCA llama a
+        # `auth.refresh()`, solo lee el token ya guardado. El vigilante de GitHub Actions
+        # (`cli.cmd_tick`) es el ÚNICO proceso que debe refrescar de verdad — dos procesos
+        # refrescando por su cuenta e independientes (el panel en Render + el vigilante) podrían
+        # pisarse el `refresh_token` si LaLiga lo rota en cada uso, rompiendo la sesión real de
+        # las alertas por una carrera del panel de solo-consulta. El panel recibe la sesión ya
+        # refrescada por el vigilante (`/internal/sync-tokens`, empujado tras cada tick).
+        self._bearer = auth.bearer if refresh_session else auth.bearer_readonly
 
     # --- infraestructura -------------------------------------------------
     def get(self, path: str, *, authed: bool = True, params: dict | None = None, cache: bool = False) -> Any:
@@ -33,7 +41,7 @@ class FantasyAPI:
             time.sleep(wait)  # ritmo humano: no machacar la API
         headers = {"x-lang": "es", "x-app": "Fantasy"}
         if authed:
-            headers["Authorization"] = f"Bearer {auth.bearer(self.s)}"
+            headers["Authorization"] = f"Bearer {self._bearer(self.s)}"
         data = request_json("GET", BASE + path, headers=headers, params=params)
         self._last_call = time.time()
         if cache:

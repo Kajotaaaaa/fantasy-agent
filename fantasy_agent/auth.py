@@ -155,3 +155,20 @@ def bearer(settings: Settings) -> str:
     if not token:
         raise RuntimeError("La respuesta de login no trae access_token ni id_token.")
     return token
+
+
+def bearer_readonly(settings: Settings) -> str:
+    """Como `bearer`, pero SIN refrescar NUNCA (panel web, Fase 1, 2026-09-27, ver
+    `webapp.py`/`api.FantasyAPI`): el vigilante de GitHub Actions es el único proceso que debe
+    llamar a `refresh()` — este helper es para el servicio siempre encendido (Render) al que se
+    le empuja la sesión ya refrescada tras cada tick (`/internal/sync-tokens`), para que nunca
+    compita por refrescar el mismo `refresh_token` con el vigilante real."""
+    tokens = load_tokens(settings)
+    if not tokens:
+        raise RuntimeError("Sin sesión todavía (esperando el primer envío del vigilante).")
+    if tokens["expires_at"] - time.time() < 60:
+        raise RuntimeError("Sesión a punto de caducar; espera al próximo tick del vigilante (cada 30 min).")
+    token = tokens.get("access_token") or tokens.get("id_token")
+    if not token:
+        raise RuntimeError("La sesión guardada no trae access_token ni id_token.")
+    return token
