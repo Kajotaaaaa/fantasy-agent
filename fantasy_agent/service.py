@@ -312,7 +312,9 @@ def _market_study_picks(world: World, top: int = 3) -> list[tuple[models.MarketI
     return out
 
 
-def _investment_picks(world: World, top: int = 5) -> list[tuple[models.MarketItem, analysis.Trend]]:
+def _investment_picks(
+    world: World, top: int = 5, min_d3: float = analysis.FLIP_MIN_D3,
+) -> list[tuple[models.MarketItem, analysis.Trend]]:
     """Candidatos a flipeo (comprar y revender rápido). Excluye TOP de liga (a esos los quieres
     para tu once, no para venderlos) y también a cualquiera que ya salga en `_market_picks`
     (fichaje recomendado para tu once): 2026-09-22, el usuario notó que el mismo jugador podía
@@ -327,7 +329,7 @@ def _investment_picks(world: World, top: int = 5) -> list[tuple[models.MarketIte
         if item.player.id in world.league_top_ids or item.player.id in lineup_targets:
             continue
         trend = world.trends.get(item.player.id, (item.player, analysis.Trend(0, 0, 0)))[1]
-        score = analysis.score_investment(item, trend)
+        score = analysis.score_investment(item, trend, min_d3)
         if score is not None:
             picks.append((score, item, trend))
     picks.sort(key=lambda x: -x[0])

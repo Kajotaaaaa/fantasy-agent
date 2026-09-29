@@ -451,12 +451,22 @@ def market_take(stars: int, trend: Trend, available: bool, status: str, cant_aff
     return lead
 
 
-def score_investment(item: MarketItem, trend: Trend) -> float | None:
+# Umbrales de ENTRADA del flipeo, aflojados el 2026-09-29. Motivo: con FLIP_MODE=on desde el
+# 21/09, el libro de resultados salió con CERO operaciones en 8 días — no es que perdiera dinero,
+# es que los filtros no dejaban pasar a nadie y nunca llegó a comprar. Se le da una semana con el
+# listón más bajo para poder juzgarlo con datos. Se pueden ajustar sin tocar código con las
+# variables de repositorio FLIP_MIN_D3 / FLIP_MIN_D1 (ver `flip._thresholds`).
+FLIP_MIN_D3 = 1.0  # antes 1.5: subida mínima acumulada en 3 días, en %
+FLIP_MIN_D1 = 0.2  # antes 0.5: subida mínima de HOY, en %
+FLIP_MAX_PRICE_RATIO = 1.05  # precio pedido máximo, sobre el valor de mercado
+
+
+def score_investment(item: MarketItem, trend: Trend, min_d3: float = FLIP_MIN_D3) -> float | None:
     """Puntuación centrada solo en potencial de revalorización (comprar barato, vender caro)."""
     p = item.player
-    if not p.available or not p.market_value or item.price > p.market_value * 1.05:
+    if not p.available or not p.market_value or item.price > p.market_value * FLIP_MAX_PRICE_RATIO:
         return None
-    if trend.d3 < 1.5:
+    if trend.d3 < min_d3:
         return None
     return round(trend.d3 * 2 + max(trend.d1, 0) * 1.5, 1)
 

@@ -232,6 +232,39 @@ class Tests(unittest.TestCase):
         # El flipeo no toca un anuncio donde ya hay una puja tuya.
         self.assertEqual(flip.plan_bids([(item, analysis.Trend(2.0, 4.0, 8.0))], 100_000_000, 0, [], set(), 0), [])
 
+    def test_rejection_diagnosis_matches_the_real_filters(self):
+        """El diagnóstico de "por qué no compré" repite la cadena de filtros por su cuenta, así
+        que podría desviarse y mentir en el aviso. Este test lo ata: quien NO aparece en
+        `rejections` es exactamente quien pasa los filtros de verdad (`_investment_picks` +
+        `flip_amount`), y a todo descartado se le da un motivo."""
+        from fantasy_agent import flip
+
+        world = service.build_world(FakeAPI(), self.s)
+        descartados = {nombre for nombre, _ in flip.rejections(world)}
+        aceptados = {
+            item.player.name for item, trend in service._investment_picks(world, top=99)
+            if flip.flip_amount(item, trend) is not None
+        }
+        pujables = {item.player.name for item in service._biddable(world)}
+
+        self.assertEqual(descartados & aceptados, set(), "alguien sale a la vez como aceptado y descartado")
+        self.assertEqual(descartados | aceptados, pujables, "algún anuncio pujable se queda sin clasificar")
+        for _, motivo in flip.rejections(world):
+            self.assertTrue(motivo.strip(), "hay un descarte sin motivo")
+
+    def test_loosened_thresholds_can_be_tuned_without_touching_code(self):
+        """La semana de prueba necesita poder mover el listón desde las variables del repo. Y una
+        variable mal puesta no puede tumbar el tick."""
+        from unittest import mock
+
+        from fantasy_agent import analysis, flip
+
+        self.assertEqual(flip._thresholds(), (analysis.FLIP_MIN_D3, analysis.FLIP_MIN_D1))
+        with mock.patch.dict(os.environ, {"FLIP_MIN_D3": "2.5", "FLIP_MIN_D1": "0.9"}):
+            self.assertEqual(flip._thresholds(), (2.5, 0.9))
+        with mock.patch.dict(os.environ, {"FLIP_MIN_D3": "no soy un número"}):
+            self.assertEqual(flip._thresholds()[0], analysis.FLIP_MIN_D3)
+
     def test_bid_rows_offers_all_cash_when_margin_and_max_dont_fit(self):
         """Caso real (Adeyemi, 2026-09-26): una buena oportunidad puede calcular un "margen" y un
         "máximo" que superan lo que el usuario tiene disponible. Antes eso dejaba solo el botón de

@@ -39,7 +39,11 @@ from .config import Settings
 CAP_PCT = 0.25  # dinero comprometido en flipeos a la vez, sobre (saldo + coste de lo ya comprado)
 MAX_OPEN = 4  # pujas pendientes + jugadores sin vender a la vez
 MAX_NEW_PER_RUN = 3
-MAX_OVERPAY = 1.03  # nunca pujar más de un 3% por encima del valor de mercado
+# Antes 1.03, que contradecía el propio filtro de candidatos: `score_investment` admite anuncios
+# pedidos hasta un 105% del valor, pero luego esto tumbaba la puja por pasar del 103%. Igualados
+# los dos en 1.05 (2026-09-29) — se revende a ofertas del juego de ±5% sobre el valor, así que
+# ese es el techo real por encima del cual el margen desaparece.
+MAX_OVERPAY = analysis.FLIP_MAX_PRICE_RATIO
 LIST_RETRIES = 5
 EXPIRY_GRACE = timedelta(minutes=20)  # margen tras el cierre antes de dar una puja por perdida
 MAX_LOSS_DEFAULT_M = 5.0  # millones perdidos en 14 días a partir de los que se frena la compra
@@ -59,6 +63,19 @@ def breaker_reason(results: list[dict], now: datetime, max_loss: int) -> str | N
     return None
 
 
+def _thresholds() -> tuple[float, float]:
+    """Umbrales de entrada (mínimo de 3 días, mínimo de hoy), con las variables de repositorio
+    FLIP_MIN_D3 / FLIP_MIN_D1 por encima de los valores por defecto. Existen para poder ajustar
+    el listón durante la semana de prueba sin tener que tocar código: un valor que no sea un
+    número se ignora y se usa el de siempre, nunca revienta el tick por una variable mal puesta."""
+    def read(name: str, default: float) -> float:
+        try:
+            return float(os.environ.get(name) or default)
+        except ValueError:
+            return default
+    return read("FLIP_MIN_D3", analysis.FLIP_MIN_D3), read("FLIP_MIN_D1", analysis.FLIP_MIN_D1)
+
+
 def flip_amount(item: models.MarketItem, trend: analysis.Trend) -> int | None:
     """Cuánto pujar por este anuncio, o None si no merece un flip: sigue subiendo AHORA (hoy
     al menos +0.5% y no menos de la mitad del ritmo diario de los últimos 3 días: una subida
@@ -68,7 +85,11 @@ def flip_amount(item: models.MarketItem, trend: analysis.Trend) -> int | None:
     más se come el margen. (Pablo García, 2026-09-21: subió +41% en 9 días pero hoy +0.18% con
     una media de 1.5%/día: con "d1 > 0" a secas pasó el filtro y se pujó un 2.2% por encima de
     su valor sobre una proyección inflada.)"""
-    if trend.d1 < 0.5 or trend.d1 < trend.d3 / 6 or trend.cooling:
+    _, min_d1 = _thresholds()
+    # `d1 < d3/6` se queda como estaba: es la lección de Pablo García (una subida que se frena no
+    # vale), y es lo único que distingue "sigue subiendo" de "subió y ya no". Lo que se afloja es
+    # el suelo absoluto de hoy.
+    if trend.d1 < min_d1 or trend.d1 < trend.d3 / 6 or trend.cooling:
         return None
     mv = item.player.market_value
     plan = analysis.bid_plan(service.bid_amount(item), mv, trend, item.player.avg_points, 0.0, False)
@@ -108,6 +129,47 @@ def plan_bids(
         room -= amount
         cash_free -= amount
     return plan
+
+
+def rejections(world: service.World) -> list[tuple[str, str]]:
+    """Por qué se ha descartado cada anuncio pujable, en el MISMO orden de filtros que aplican
+    `service._investment_picks` y `flip_amount`. Devuelve (nombre, motivo).
+
+    Existe porque el flipeo estuvo 8 días sin comprar nada y no había forma de saber cuál de los
+    filtros lo impedía: el aviso de "hoy no hay candidatos" no decía si fallaban por poco o por
+    mucho. Es solo diagnóstico — no decide nada, y si se desvía de los filtros de verdad lo único
+    que pasa es que el mensaje miente; por eso hay un test que los mantiene en sintonía."""
+    min_d3, min_d1 = _thresholds()
+    lineup_targets = {item.player.id for item, _, _ in service._market_picks(world)}
+    out: list[tuple[str, str]] = []
+    for item in service._biddable(world):
+        p = item.player
+        t = world.trends.get(p.id, (p, analysis.Trend(0, 0, 0)))[1]
+        mv = p.market_value
+        if p.id in world.league_top_ids:
+            motivo = "es TOP de liga (lo quieres para tu once)"
+        elif p.id in lineup_targets:
+            motivo = "ya sale como fichaje para tu once"
+        elif not p.available:
+            motivo = f"no disponible ({p.status})"
+        elif not mv:
+            motivo = "sin valor de mercado"
+        elif item.price > mv * analysis.FLIP_MAX_PRICE_RATIO:
+            motivo = f"lo piden a {item.price / mv:.2f}x su valor (tope {analysis.FLIP_MAX_PRICE_RATIO:.2f}x)"
+        elif t.d3 < min_d3:
+            motivo = f"sube poco en 3 días: {t.d3:+.1f}% (hace falta {min_d3:+.1f}%)"
+        elif t.cooling:
+            motivo = f"la racha se está enfriando ({t.d1:+.1f}% hoy, {t.d3:+.1f}% en 3 días)"
+        elif t.d1 < min_d1:
+            motivo = f"hoy sube poco: {t.d1:+.1f}% (hace falta {min_d1:+.1f}%)"
+        elif t.d1 < t.d3 / 6:
+            motivo = f"se está frenando: hoy {t.d1:+.1f}% frente a {t.d3:+.1f}% en 3 días"
+        elif flip_amount(item, t) is None:
+            motivo = "la puja saldría por encima del tope sobre su valor"
+        else:
+            continue  # este SÍ pasa los filtros
+        out.append((p.name, motivo))
+    return out
 
 
 def _load(store, prefix: str) -> dict[str, dict]:
@@ -240,11 +302,23 @@ def _buy(api: FantasyAPI, world: service.World, store, s: Settings, now: datetim
     committed = held_cost + sum(p["amount"] for p in pending.values())
     out = []
     if not plan:
-        # Sin esto no se distingue "el bot no funciona" de "hoy no había nada que comprar".
+        # Sin esto no se distingue "el bot no funciona" de "hoy no había nada que comprar". Y
+        # desde 2026-09-29 se dice además QUÉ filtro tumbó a cada uno: ocho días de "hoy no hay
+        # candidatos" no dejaban ver si fallaban por poco o por mucho, que es justo lo que hace
+        # falta para decidir si el flipeo sirve o se quita.
         tag = "🕶️ (sombra) " if shadow else ""
+        min_d3, min_d1 = _thresholds()
+        motivos = rejections(world)
+        detalle = "\n".join(f"· {b(nombre)}: {esc(motivo)}" for nombre, motivo in motivos[:8])
+        if len(motivos) > 8:
+            detalle += f"\n{i(f'...y {len(motivos) - 8} más')}"
+        if not detalle:
+            detalle = i("Ninguno pasó los topes de dinero (ver arriba).")
         notify.send_telegram(
-            s, f"🤖 {tag}{b('Flipeo')}\nHoy no hay candidatos que cumplan las reglas: que suban hoy, no se enfríen, "
-               f"no cuesten más del 103% de su valor y quepan en el tope ({service.m(round(cap))}).",
+            s, f"🤖 {tag}{b('Flipeo')}\nHoy no hay candidatos. Listón: sube ≥{min_d1:.1f}% hoy y "
+               f"≥{min_d3:.1f}% en 3 días, sin enfriarse, a un precio ≤{analysis.FLIP_MAX_PRICE_RATIO:.2f}x "
+               f"su valor, y cabiendo en el tope ({service.m(round(cap))}).\n\n"
+               f"{b('Por qué se descartó cada uno:')}\n{detalle}",
         )
         return ["sin candidatos"]
     for item, amount, trend in plan:
