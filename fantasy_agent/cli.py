@@ -612,6 +612,9 @@ def cmd_flip_book(args, s) -> None:
     rows.sort(key=lambda r: r["at"])
     baseline = store.get("flip_baseline") or ""
 
+    # Sin esto, un libro vacío es ambiguo: no se distingue "el flipeo nunca operó" de "la caché
+    # de Actions no se restauró y estamos leyendo un Store recién creado".
+    print(f"Claves en el Store: {len(store.prefixed(''))} (si sale 0, la caché NO se restauró)")
     print(f"FLIP_MODE = {s.flip_mode}")
     pending, held = store.prefixed("flip_pending:"), store.prefixed("flip_held:")
     print(f"Pujas pendientes: {sum(1 for v in pending.values() if v)}")
