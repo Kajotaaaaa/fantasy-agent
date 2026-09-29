@@ -1,0 +1,38 @@
+name: fantasy-flip-book
+
+# SOLO LECTURA: imprime el libro de resultados del flipeo en el log de la ejecución.
+# Existe porque el estado real (`flip_result:*`, `flip_held:*`) vive en la caché de Actions, no en
+# el SQLite de ningún ordenador: sin esto no hay forma de ver cuánto ha ganado o perdido el flipeo
+# sin esperar al informe diario.
+#
+# NO guarda la caché al terminar (solo `cache/restore`), así que no puede pisar el estado del
+# `tick`. Tampoco renueva la sesión: si el token está caducado, el comando no usa la API para
+# nada — lee el Store y ya está.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  flip-book:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restaurar estado (sin volver a guardarlo)
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: fantasy-state-${{ github.run_id }}
+          restore-keys: |
+            fantasy-state-
+
+      - name: Libro de resultados del flipeo
+        run: python -m fantasy_agent flip-book
+        env:
+          FLIP_MODE: ${{ vars.FLIP_MODE }}
+          FANTASY_LEAGUE_ID: ${{ secrets.FANTASY_LEAGUE_ID }}
+          FANTASY_TEAM_ID: ${{ secrets.FANTASY_TEAM_ID }}

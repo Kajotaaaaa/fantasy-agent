@@ -121,6 +121,126 @@ def cmd_probe(args, s) -> None:
     print(json.dumps(data, indent=2, ensure_ascii=False)[: args.max_chars])
 
 
+def cmd_raw_team(args, s) -> None:
+    """Vuelca el JSON CRUDO de tu equipo, resolviendo liga y equipo solo (sin tener que copiar
+    ids). Solo lectura. Sirve para comprobar si la API devuelve la alineación guardada: el panel
+    de sniperfantasy enseña hoy el mejor once CALCULADO, y para enseñar el real hay que confirmar
+    antes que el dato existe, en vez de suponerlo."""
+    api = FantasyAPI(s)
+    league_id, team_id, _ = service.resolve_league(api, s)
+    if not team_id:
+        world = service.build_world(api, s, with_trends=False)
+        team_id = world.my_team_id
+    print(f"Liga {league_id} · equipo {team_id}\n")
+    payload = api.team(league_id, team_id)
+    if args.keys:
+        # Resumen diminuto en vez del volcado entero: basta para saber si un campo EXISTE, sin
+        # que la respuesta se corte por longitud y deje la duda.
+        print("Claves de primer nivel:", list(payload) if isinstance(payload, dict) else f"(lista de {len(payload)})")
+        players = payload.get("players") if isinstance(payload, dict) else payload
+        if players:
+            print("Claves de un jugador:", list(players[0]))
+            print("Claves de playerMaster:", list(players[0].get("playerMaster", {})))
+        if isinstance(payload, dict):
+            # `parse_squad` solo lee "players": si hay cedidos, hoy se pierden -- y eso explicaría
+            # un once corto ("solo hay N jugadores válidos"). Contarlos antes de cambiar nada.
+            loaned = payload.get("loanedPlayers") or []
+            print(f"\nplantilla: {len(players or [])} · cedidos: {len(loaned)} · "
+                  f"playersNumber: {payload.get('playersNumber')}")
+            print(f"posición en la liga: {payload.get('position')} · puntos: {payload.get('teamPoints')}")
+            for lp in loaned[:3]:
+                pm = lp.get("playerMaster", {})
+                print(f"  cedido: {pm.get('nickname')} (pos {pm.get('positionId')}) claves={list(lp)}")
+        return
+    print(json.dumps(payload, indent=2, ensure_ascii=False)[: args.max_chars])
+
+
+def cmd_find_lineup(args, s) -> None:
+    """Busca dónde vive la alineación guardada. El payload del equipo NO la trae (comprobado
+    2026-09-28), así que se prueban rutas candidatas en SOLO LECTURA: un GET por ruta, se apunta
+    qué responde cada una y no se escribe nada en ningún sitio.
+
+    También comprueba si el payload del MERCADO trae `lastStats` (minutos por jornada). Hoy los
+    minutos solo se tienen de los jugadores que están en alguna plantilla; si el mercado también
+    los trae, la mejora de VR20 pasa a ser uniforme para toda la liga."""
+    api = FantasyAPI(s)
+    league_id, team_id, _ = service.resolve_league(api, s)
+    if not team_id:
+        team_id = service.build_world(api, s, with_trends=False).my_team_id
+    week = models.to_int((api.current_week() or {}).get("weekNumber"), default=0)
+    print(f"Liga {league_id} · equipo {team_id} · jornada {week}\n")
+
+    base = "/v1/competition/1"
+    candidatas = [
+        f"{base}/leagues/{league_id}/teams/{team_id}/lineup",
+        f"{base}/leagues/{league_id}/teams/{team_id}/lineup/week/{week}",
+        f"{base}/leagues/{league_id}/teams/{team_id}/formation",
+        f"{base}/leagues/{league_id}/teams/{team_id}/week/{week}",
+        f"{base}/leagues/{league_id}/teams/{team_id}/lineups/{week}",
+        f"{base}/teams/{team_id}/lineup",
+    ]
+    for path in candidatas:
+        try:
+            data = api.get(path)
+        except Exception as exc:
+            print(f"  ✗ {path}\n      {str(exc)[:130]}")
+            continue
+        claves = list(data) if isinstance(data, dict) else f"(lista de {len(data)})"
+        print(f"  ✓ {path}\n      {claves}")
+
+    print("\n¿El mercado trae lastStats (minutos)?")
+    mercado = models.as_list(api.market(league_id), "market", "elements")
+    if not mercado:
+        print("  (mercado vacío ahora mismo, no se puede comprobar)")
+        return
+    master = models.pick(mercado[0], "playerMaster", default=mercado[0])
+    print(f"  claves de playerMaster: {list(master)}")
+    print(f"  lastStats presente: {'lastStats' in master}")
+
+
+def cmd_squad(args, s) -> None:
+    """Lectura pura: tu plantilla con el id de cada jugador, que es lo que piden `sell`/`withdraw`/
+    `update-bid`. Sin esto había que sacarlos del volcado JSON de `raw-team` a mano."""
+    api = FantasyAPI(s)
+    world = service.build_world(api, s, with_trends=False)
+    listed = {i.player.id: i for i in world.market if i.seller != "LaLiga"}
+    print(f"{'id':>8}  {'pos':<4} {'jugador':<24} {'valor':>10}  {'cláusula':>10}  estado")
+    for sl in sorted(world.my_slots, key=lambda x: (x.player.position_id, -x.player.market_value)):
+        p = sl.player
+        estado = "EN VENTA" if p.id in listed else ""
+        print(f"{p.id:>8}  {p.position:<4} {p.name[:24]:<24} {service.m(p.market_value):>10}  "
+              f"{service.m(sl.clause):>10}  {estado}")
+    print(f"\n{len(world.my_slots)} jugadores · saldo {service.m(service.resolve_league(api, s)[2])}")
+
+
+def cmd_raw_lineup(args, s) -> None:
+    """Estructura de la alineación GUARDADA (ruta hallada por sondeo: `/teams/{id}/lineup`, sin
+    liga). Solo lectura. Compacto a propósito: hace falta saber cómo viene el once para poder
+    parsearlo sin adivinar, no el volcado entero."""
+    api = FantasyAPI(s)
+    _, team_id, _ = service.resolve_league(api, s)
+    if not team_id:
+        team_id = service.build_world(api, s, with_trends=False).my_team_id
+    data = api.lineup(team_id)
+    print(f"Equipo {team_id}\n")
+    print("Claves:", list(data))
+    print("formation:", json.dumps(data.get("formation"), ensure_ascii=False)[:400])
+    equipo = data.get("team")
+    if isinstance(equipo, dict):
+        print("team es un dict, claves:", list(equipo))
+        for clave, valor in equipo.items():
+            if isinstance(valor, list) and valor:
+                print(f"  team['{clave}']: lista de {len(valor)}; claves del primero:", list(valor[0]))
+    elif isinstance(equipo, list):
+        print(f"team es una lista de {len(equipo)}")
+        if equipo:
+            print("  claves del primero:", list(equipo[0]))
+            master = models.pick(equipo[0], "playerMaster", default={})
+            if master:
+                print("  playerMaster:", list(master))
+            print("  muestra:", json.dumps(equipo[0], ensure_ascii=False)[:500])
+
+
 def cmd_leagues(args, s) -> None:
     api = FantasyAPI(s)
     league_id, team_id, _ = service.resolve_league(api, s)
@@ -255,6 +375,44 @@ def cmd_withdraw(args, s) -> None:
         return
     print("\n⚠️  Retirando del mercado de verdad...")
     result = api.withdraw_from_market(league_id, item.listing_id)
+    print("Respuesta del servidor:")
+    print(json.dumps(result, indent=2, ensure_ascii=False)[:2000] if result else "(sin cuerpo de respuesta)")
+
+
+def cmd_accept_offer(args, s) -> None:
+    """PRUEBA CONTROLADA: aceptar una oferta recibida por un jugador tuyo puesto a la venta.
+    Sin --confirm solo enseña qué haría. Usa `offers <player_id>` antes para ver el
+    `market_id`/`offer_id`/importe reales de la oferta que quieres aceptar."""
+    api = FantasyAPI(s)
+    league_id, _, _ = service.resolve_league(api, s)
+    print(f"Aceptarías la oferta {args.offer_id} del anuncio {args.market_id} por {service.m(args.amount)}")
+    if not args.confirm:
+        print("\n(vista previa — no se ha aceptado nada. Repite con --confirm para aceptarla de verdad)")
+        return
+    print("\n⚠️  Aceptando la oferta de verdad...")
+    result = api.accept_offer(league_id, args.market_id, args.offer_id, args.amount)
+    print("Respuesta del servidor:")
+    print(json.dumps(result, indent=2, ensure_ascii=False)[:2000] if result else "(sin cuerpo de respuesta)")
+
+
+def cmd_update_bid(args, s) -> None:
+    """PRUEBA CONTROLADA: cambiar la cantidad de una puja PENDIENTE tuya sobre un anuncio.
+    Sin --confirm solo enseña qué haría."""
+    api = FantasyAPI(s)
+    world = service.build_world(api, s, with_trends=False)
+    item = next((i for i in world.market if i.listing_id == args.listing_id), None)
+    if not item:
+        sys.exit(f"No encuentro el anuncio {args.listing_id} en el mercado ahora mismo.")
+    if not item.my_bid_id:
+        sys.exit(f"No tienes ninguna puja pendiente sobre el anuncio {args.listing_id}.")
+    print(f"Jugador: {item.player.name} ({item.player.position} · {item.player.team})")
+    print(f"Puja actual: {service.m(item.my_bid)} (bid_id={item.my_bid_id})")
+    print(f"Nueva puja: {service.m(args.amount)}")
+    if not args.confirm:
+        print("\n(vista previa — no se ha cambiado nada. Repite con --confirm para cambiarla de verdad)")
+        return
+    print("\n⚠️  Cambiando la puja de verdad...")
+    result = api.update_bid(world.league_id, item.listing_id, item.my_bid_id, args.amount)
     print("Respuesta del servidor:")
     print(json.dumps(result, indent=2, ensure_ascii=False)[:2000] if result else "(sin cuerpo de respuesta)")
 
@@ -438,6 +596,44 @@ def cmd_flip(args, s) -> None:
     world = _world(api, s, trends=True)
     note = flip.run(api, world, Store(s.db_file), s, buy_now=True, today=datetime.now().isoformat())
     print(note or "Sin candidatos que cumplan las reglas ahora mismo.")
+
+
+def cmd_flip_book(args, s) -> None:
+    """SOLO LECTURA: vuelca el libro de resultados del flipeo (cada operación cerrada con lo que
+    costó, lo que se cobró y el resultado) más lo que tiene ahora entre manos. No toca la API ni
+    escribe nada en el Store: sirve para decidir con la cifra delante si el flipeo compensa.
+
+    Ojo: el estado real vive en la caché de GitHub Actions, no en el SQLite local — ejecutarlo
+    aquí te dará el libro de TU máquina, que está casi vacío. Para ver el de verdad hay que
+    lanzarlo dentro de Actions (`.github/workflows/flip-book.yml`, a mano desde la pestaña
+    Actions), que es donde se restaura esa caché."""
+    store = Store(s.db_file)
+    rows = [json.loads(v) for v in store.prefixed("flip_result:").values() if v]
+    rows.sort(key=lambda r: r["at"])
+    baseline = store.get("flip_baseline") or ""
+
+    print(f"FLIP_MODE = {s.flip_mode}")
+    pending, held = store.prefixed("flip_pending:"), store.prefixed("flip_held:")
+    print(f"Pujas pendientes: {sum(1 for v in pending.values() if v)}")
+    print(f"En cartera: {sum(1 for v in held.values() if v)}")
+    if store.get("flip_paused"):
+        print(f"EN PAUSA: {store.get('flip_paused')}")
+    print(f"\nOperaciones cerradas: {len(rows)}")
+    if not rows:
+        print("  (ninguna todavía: o no ha comprado, o lo comprado sigue sin venderse)")
+        return
+
+    total = 0
+    for r in rows:
+        pct = r["profit"] / r["buy"] * 100 if r.get("buy") else 0
+        contada = "" if r["at"] > baseline else "   (anterior al último reanudar, no cuenta para el freno)"
+        total += r["profit"]
+        print(f"  {r['at'][:10]}  {r.get('name', r.get('pid', '?')):<22} "
+              f"compra {r['buy'] / 1e6:>7.2f}M  {r.get('via', '?'):<9} {r['sell'] / 1e6:>7.2f}M  "
+              f"en {r.get('days', '?'):>2} días  ->  {r['profit'] / 1e6:+7.2f}M ({pct:+.1f}%){contada}")
+    ganadas = sum(1 for r in rows if r["profit"] > 0)
+    print(f"\nTOTAL: {total / 1e6:+.2f}M en {len(rows)} operaciones "
+          f"({ganadas} en ganancia, {len(rows) - ganadas} en pérdida)")
 
 
 def cmd_snipe(args, s) -> None:
@@ -819,6 +1015,24 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("url", nargs="?")
     p.set_defaults(func=cmd_auth)
 
+    sub.add_parser(
+        "squad", help="Lectura: tu plantilla con el id de cada jugador",
+    ).set_defaults(func=cmd_squad)
+
+    sub.add_parser(
+        "raw-lineup", help="Lectura: estructura de tu alineación guardada",
+    ).set_defaults(func=cmd_raw_lineup)
+
+    sub.add_parser(
+        "find-lineup",
+        help="Lectura: busca el endpoint de la alineación guardada y si el mercado trae minutos",
+    ).set_defaults(func=cmd_find_lineup)
+
+    p = sub.add_parser("raw-team", help="Lectura: JSON crudo de tu equipo (resuelve liga/equipo solo)")
+    p.add_argument("--keys", action="store_true", help="solo los nombres de campo, sin el volcado entero")
+    p.add_argument("--max-chars", type=int, default=12000)
+    p.set_defaults(func=cmd_raw_team)
+
     p = sub.add_parser("probe", help="Ver JSON crudo de una ruta de la API")
     p.add_argument("path", help="p.ej. /v1/competition/1/leagues")
     p.add_argument("--public", action="store_true", help="sin token")
@@ -892,6 +1106,19 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--confirm", action="store_true", help="ejecuta de verdad; sin esto solo es vista previa")
     p.set_defaults(func=cmd_withdraw)
 
+    p = sub.add_parser("accept-offer", help="PRUEBA: aceptar una oferta por un jugador tuyo puesto a la venta (--confirm para ejecutar de verdad)")
+    p.add_argument("market_id", help="id del anuncio (usa 'offers <player_id>' para verlo)")
+    p.add_argument("offer_id", help="id de la oferta a aceptar (usa 'offers <player_id>' para verlo)")
+    p.add_argument("amount", type=int, help="importe exacto de la oferta (usa 'offers <player_id>' para verlo)")
+    p.add_argument("--confirm", action="store_true", help="ejecuta de verdad; sin esto solo es vista previa")
+    p.set_defaults(func=cmd_accept_offer)
+
+    p = sub.add_parser("update-bid", help="PRUEBA: cambiar la cantidad de una puja pendiente tuya (--confirm para ejecutar de verdad)")
+    p.add_argument("listing_id", help="id del anuncio (columna 'listing_id', no el del jugador)")
+    p.add_argument("amount", type=int, help="nueva cantidad a pujar")
+    p.add_argument("--confirm", action="store_true", help="ejecuta de verdad; sin esto solo es vista previa")
+    p.set_defaults(func=cmd_update_bid)
+
     sub.add_parser(
         "simulate-clause", help="Simulacro por Telegram de los avisos de compra de cláusula armada (no compra nada)",
     ).set_defaults(func=cmd_simulate_clause)
@@ -907,6 +1134,9 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(func=cmd_snipe)
 
     sub.add_parser("flip", help="Prueba del flipeo en modo sombra: qué pujaría ahora (no ejecuta nada)").set_defaults(func=cmd_flip)
+    sub.add_parser(
+        "flip-book", help="Solo lectura: el libro de resultados del flipeo (qué compró, qué vendió y cuánto ganó/perdió)"
+    ).set_defaults(func=cmd_flip_book)
 
     p = sub.add_parser("set-webhook", help="Configura el webhook de Telegram hacia el Worker (una vez)")
     p.add_argument("url", help="URL pública del Worker desplegado")
