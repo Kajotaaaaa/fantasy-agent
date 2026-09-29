@@ -173,14 +173,34 @@ estado real vive en la caché de Actions, no en el SQLite local; no ejecutar `wa
   puja con margen, nunca > 103% del valor de mercado; comprometido (pujas pendientes + coste de
   lo comprado) ≤ 25% de (saldo + coste de lo comprado), cada puja ≤ la mitad de ese tope, ≤ 4
   flips abiertos y ≤ 3 pujas nuevas por día; lo pujado nunca supera el saldo (prohibido
-  quedarse en negativo). No puja por lo que sale en "Mercado para tu once" (es tu lista de
-  fichajes manuales; la API no deja ver tus propias pujas, así que no se puede saber si ya
-  pujaste a mano) — este filtro vive DENTRO de `_investment_picks` (2026-09-22, antes lo
-  aplicaba `flip._buy` por su cuenta): el usuario notó que el mismo jugador podía salir en
-  "Mercado para tu once" Y en "Inversión" con una puja "máxima" distinta para el MISMO anuncio
-  (14 días/fichaje vs 3 días/flipeo, números que no cuadraban entre sí). Al mover el filtro al
-  origen de los datos, los informes y el flipeo real siempre coinciden: si algo ya sale como
-  fichaje recomendado, no vuelve a salir como oportunidad de inversión aparte.
+  quedarse en negativo).
+- **Ocho días sin comprar NADA, y qué se hizo (2026-09-29).** Con `FLIP_MODE=on` desde el 21/09,
+  el libro de resultados salió con cero operaciones: no es que perdiera dinero, es que los
+  filtros no dejaban pasar a nadie. El usuario se planteó quitar el flipeo entero; se decidió
+  darle una semana con el listón más bajo y, sobre todo, con VISIBILIDAD. Cambios:
+  - `flip.rejections(world)` dice, por cada anuncio pujable, QUÉ filtro lo tumbó y por cuánto; el
+    aviso de "hoy no hay candidatos" lo incluye. Sin esto, otra semana de silencio no habría
+    dicho nada nuevo. Un test lo mantiene en sintonía con los filtros de verdad.
+  - Umbrales de entrada aflojados: d3 ≥ 1.5% → 1.0%, d1 ≥ 0.5% → 0.2% (`analysis.FLIP_MIN_D3` /
+    `FLIP_MIN_D1`, ajustables sin tocar código con variables de repositorio del mismo nombre, ver
+    `flip._thresholds`). `d1 < d3/6` se queda: es la lección de Pablo García.
+  - `MAX_OVERPAY` 1.03 → 1.05. Era una contradicción, no un ajuste: `score_investment` admite
+    anuncios pedidos hasta 1.05x el valor y luego `flip_amount` tumbaba la puja por pasar de
+    1.03x, así que todo lo que caía entre medias entraba por una puerta y salía por la otra.
+  - **Un fichaje recomendado para tu once YA PUEDE salir también como inversión.** Se excluía
+    desde el 2026-09-22 y era de los motivos de descarte que más se repetían — estaba quitando
+    del flipeo justo a los de mejor tendencia. Aquel filtro tapaba dos problemas distintos y
+    cada uno se resuelve mejor por separado: (1) *la confusión* de ver dos pujas máximas para el
+    mismo anuncio (14 días/fichaje vs 3 días/flipeo) se arregla DICIÉNDOLO — la ficha de
+    inversión avisa cuando el jugador sale también como fichaje, y la cabecera explica que son
+    dos plazos distintos; (2) *revender lo que querías conservar* se evita al VENDER, no al
+    comprar: `flip._list_held` ya no pone a la venta por su cuenta a un jugador que salga
+    recomendado para tu once — avisa una vez (`kept_notice`) y lo deja en cartera para que
+    decidas tú.
+  - Los topes de dinero y el freno de pérdidas NO se tocaron.
+  - `python -m fantasy_agent flip-book` (y `.github/workflows/flip-book.yml`, a mano) vuelca el
+    libro de resultados leyendo la caché de Actions sin volver a guardarla — es la única forma de
+    ver qué ha hecho el flipeo sin esperar al informe diario.
 - **Aceptar/rechazar ofertas (resuelto, 2026-09-22).** Primera oferta real vista:
   `{"id", "createdAt", "expirationDate", "isFromMarket": true, "money", "status": "pending",
   "updatedAt"}` — sin campo de usuario: `isFromMarket: true` confirma que son las ofertas que

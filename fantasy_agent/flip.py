@@ -140,7 +140,6 @@ def rejections(world: service.World) -> list[tuple[str, str]]:
     mucho. Es solo diagnóstico — no decide nada, y si se desvía de los filtros de verdad lo único
     que pasa es que el mensaje miente; por eso hay un test que los mantiene en sintonía."""
     min_d3, min_d1 = _thresholds()
-    lineup_targets = {item.player.id for item, _, _ in service._market_picks(world)}
     out: list[tuple[str, str]] = []
     for item in service._biddable(world):
         p = item.player
@@ -148,8 +147,6 @@ def rejections(world: service.World) -> list[tuple[str, str]]:
         mv = p.market_value
         if p.id in world.league_top_ids:
             motivo = "es TOP de liga (lo quieres para tu once)"
-        elif p.id in lineup_targets:
-            motivo = "ya sale como fichaje para tu once"
         elif not p.available:
             motivo = f"no disponible ({p.status})"
         elif not mv:
@@ -261,6 +258,21 @@ def _list_held(api: FantasyAPI, world: service.World, store, s: Settings, now: d
             continue
         price = slot.player.market_value
         if not price or not slot.player_team_id or h.get("last_try") == today or h["tries"] >= LIST_RETRIES:
+            continue
+        # Desde que el flipeo puede comprar a alguien que también sale recomendado para tu once
+        # (2026-09-29, ver `service._investment_picks`), NO se le pone a la venta por su cuenta:
+        # sería venderte de debajo justo al que querías conservar. Se avisa una vez y decides tú
+        # (el botón de vender ya existe en "Candidatos a vender"); mientras, se queda en cartera.
+        if pid in {it.player.id for it, _, _ in service._market_picks(world)}:
+            if not h.get("kept_notice"):
+                h["kept_notice"] = True
+                store.set(f"flip_held:{pid}", json.dumps(h))
+                notify.send_telegram(
+                    s, f"🤖 {b('Flip que quizá quieras quedarte')}\n{b(h['name'])} lo compró el flipeo por "
+                       f"{service.m(h['buy_price'])}, pero ahora sale recomendado para TU ONCE.\n"
+                       f"{i('No lo pongo a la venta por mi cuenta: decide tú si lo conservas o lo vendes.')}",
+                )
+                out.append(f"retenido {h['name']}")
             continue
         h["tries"] += 1
         h["last_try"] = today

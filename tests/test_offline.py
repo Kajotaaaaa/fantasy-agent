@@ -1,7 +1,9 @@
 """Tests sin red: API falsa con payloads con la forma documentada por la comunidad."""
+import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -112,19 +114,46 @@ class Tests(unittest.TestCase):
         # (solo se consigue por cláusula) y no debe salir como oportunidad de mercado.
         self.assertNotIn("NoEsPujable", txt)
 
-    def test_investment_picks_excludes_lineup_targets(self):
-        # Petición del usuario (2026-09-22): el mismo jugador (Chollo) salía en "Mercado para
-        # tu once" Y en "Inversión", con una puja "máxima" distinta para el MISMO anuncio (14
-        # días vs 3 — fichaje vs flipeo). Ya era la regla que aplicaba `flip._buy` para no
-        # comprar y revender a alguien que en realidad querías conservar; ahora vive en
-        # `_investment_picks` para que los informes coincidan con el flipeo real.
+    def test_a_lineup_target_can_also_be_an_investment_but_says_so(self):
+        """2026-09-29: un fichaje recomendado para tu once ya PUEDE salir además como inversión.
+        Antes se excluía (desde el 2026-09-22) para que el mismo jugador no apareciera con dos
+        pujas máximas distintas; el problema es que así el flipeo se quedaba sin sus mejores
+        candidatos — 8 días sin comprar nada. Ahora sale en las dos listas, pero cada ficha dice
+        para qué es su cantidad, que era el problema de verdad."""
         world = service.build_world(FakeAPI(), self.s)
         market_names = {item.player.name for item, _, _ in service._market_picks(world)}
         investment_names = {item.player.name for item, _ in service._investment_picks(world)}
         self.assertIn("Chollo", market_names)
-        self.assertFalse(market_names & investment_names)
-        self.assertNotIn("Chollo", investment_names)
-        self.assertEqual(service.investment_report(world), "")  # nada que ofrecer, ya está en "el once"
+        self.assertIn("Chollo", investment_names)
+
+        # La ficha de inversión avisa de que también es fichaje, para que las dos cantidades no
+        # parezcan un error. Sin ese aviso, esto vuelve a ser el fallo que se arregló en 09-22.
+        item, trend = next((i, t) for i, t in service._investment_picks(world) if i.player.name == "Chollo")
+        text, _ = service._investment_card(world, item, trend)
+        self.assertIn("también sale como fichaje para tu once", text)
+
+    def test_flip_does_not_auto_sell_a_player_you_want_in_your_eleven(self):
+        """La salvaguarda que sustituye al filtro de arriba: el riesgo real nunca fue comprarlo,
+        sino que el flipeo lo revendiera solo. Si lo comprado sale recomendado para tu once, no
+        se pone a la venta por su cuenta: avisa y decides tú."""
+        from fantasy_agent import flip
+
+        world = service.build_world(FakeAPI(), self.s)
+        # Tiene que estar EN TU PLANTILLA: `_list_held` da por cerrado (vendido) a quien ya no
+        # está en ella, y entonces ni llega al punto donde decide si ponerlo a la venta.
+        objetivo = next(sl.player for sl in world.my_slots if sl.player_team_id)
+        store = Store(Path(tempfile.mkdtemp()) / "held.sqlite3")
+        store.set(f"flip_held:{objetivo.id}", json.dumps(
+            {"name": objetivo.name, "buy_price": 1_000_000, "listed": False, "tries": 0}))
+
+        sent = []
+        with mock.patch.object(flip.notify, "send_telegram", lambda s, msg, **kw: sent.append(msg)), \
+             mock.patch.object(flip.service, "_market_picks", lambda w, *a, **k: [(
+                 type("I", (), {"player": objetivo})(), None, False)]):
+            notes = flip._list_held(FakeAPI(), world, store, self.s, NOW)
+
+        self.assertTrue(any("retenido" in n for n in notes), notes)
+        self.assertTrue(any("quizá quieras quedarte" in msg for msg in sent), sent)
 
     def test_action_buttons(self):
         world = service.build_world(FakeAPI(), self.s)

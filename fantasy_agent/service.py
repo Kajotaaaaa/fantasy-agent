@@ -315,18 +315,24 @@ def _market_study_picks(world: World, top: int = 3) -> list[tuple[models.MarketI
 def _investment_picks(
     world: World, top: int = 5, min_d3: float = analysis.FLIP_MIN_D3,
 ) -> list[tuple[models.MarketItem, analysis.Trend]]:
-    """Candidatos a flipeo (comprar y revender rápido). Excluye TOP de liga (a esos los quieres
-    para tu once, no para venderlos) y también a cualquiera que ya salga en `_market_picks`
-    (fichaje recomendado para tu once): 2026-09-22, el usuario notó que el mismo jugador podía
-    aparecer en "Mercado para tu once" Y en "Inversión" con una puja "máxima" distinta para el
-    MISMO anuncio (14 días vs 3, fichaje vs flipeo) — confuso, y ya era justo la regla que
-    `flip._buy` aplicaba para no comprar y revender a alguien que en realidad querías conservar
-    (`flip.lineup_targets`); ahora vive aquí para que los informes y el flipeo real coincidan
-    siempre, en vez de que `flip.py` tuviera que repetir el filtro por su cuenta."""
-    lineup_targets = {item.player.id for item, _, _ in _market_picks(world)}
+    """Candidatos a flipeo (comprar y revender rápido). Excluye TOP de liga: a esos los quieres
+    para tu once, no para venderlos.
+
+    **Ya NO excluye a los fichajes recomendados para tu once (2026-09-29).** Lo hacía desde el
+    2026-09-22 por dos motivos distintos, y los dos se resuelven mejor de otra forma:
+    - *Confusión*: el mismo jugador salía en "Mercado para tu once" Y en "Inversión" con dos
+      pujas máximas distintas para el MISMO anuncio (14 días vs 3), y parecía un fallo. Ahora
+      cada ficha dice para qué es cada cantidad, y la que sale en las dos lo avisa (ver
+      `_investment_card`) — son dos precios para dos planes distintos, no un error.
+    - *Revender lo que querías conservar*: ese riesgo es real, pero el sitio donde se evita es al
+      VENDER, no al comprar. `flip._list_held` ya no pone a la venta por su cuenta a un jugador
+      que sale recomendado para tu once: te pregunta.
+    El motivo del cambio: con el filtro puesto, el flipeo pasó 8 días sin encontrar UN solo
+    candidato, y al diagnosticarlo (`flip.rejections`) "ya sale como fichaje para tu once" era de
+    los motivos que más se repetían — estaba descartando justo a los que mejor tendencia llevan."""
     picks = []
     for item in _biddable(world):
-        if item.player.id in world.league_top_ids or item.player.id in lineup_targets:
+        if item.player.id in world.league_top_ids:
             continue
         trend = world.trends.get(item.player.id, (item.player, analysis.Trend(0, 0, 0)))[1]
         score = analysis.score_investment(item, trend, min_d3)
@@ -545,6 +551,12 @@ def _investment_card(
 ) -> tuple[str, dict | None]:
     p = item.player
     plan = _plan_for(world, item, trend, False, with_ceiling=False, rival_cash=rival_cash)
+    # Desde que un mismo jugador puede salir en las dos listas (ver `_investment_picks`), hay que
+    # decirlo en su ficha: si no, ves dos cantidades distintas para el mismo anuncio y parece un
+    # error del bot en vez de dos planes distintos.
+    tambien_fichaje = p.id in {it.player.id for it, _, _ in _market_picks(world)}
+    aviso = [i("⚠️ Este también sale como fichaje para tu once, con otra puja: aquélla es para "
+               "quedártelo, ésta para revenderlo en pocos días. Elige un plan, no los dos.")] if tambien_fichaje else []
     text = "\n".join([
         f"{b(p.name)}  <i>{esc(analysis.team_label(p.team))}</i>",
         f"💰 Mínimo {b(m(plan.minimum))}",
@@ -552,6 +564,7 @@ def _investment_card(
         *_my_bid_line(item),
         *_plan_lines(plan, days=3),
         *_rivals_line(world, plan.minimum, rival_cash),
+        *aviso,
     ])
     return text, _keyboard(_bid_rows(world, item, trend, False, with_ceiling=False, rival_cash=rival_cash))
 
@@ -588,7 +601,9 @@ def buy_sections(world: World, min_score: float = 8.0, rival_cash: dict[str, int
         text, kb = _market_card(world, item, trend, is_top, rival_cash)
         sections.append((f"{head}\n\n{text}" if idx == 0 else text, kb))
     inv_picks = _investment_picks(world)
-    head2 = f"{b('💹 Oportunidades de inversión')}\n{i('Comprar y revender, no para tu once')}"
+    head2 = (f"{b('💹 Oportunidades de inversión')}\n"
+             f"{i('Comprar y revender rápido. Las cantidades de aquí son a 3 días; las de arriba, a 14 — '
+                  'alguno puede salir en las dos listas con dos precios, y no es un fallo.')}")
     if not inv_picks:
         sections.append((f"{head2}\n\n{i('Nada que compense comprar y revender hoy.')}", None))
     for idx, (item, trend) in enumerate(inv_picks):

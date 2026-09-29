@@ -77,6 +77,12 @@ class FantasyAPI:
     def team(self, league_id: str, team_id: str) -> dict:
         return self.get(f"{COMP}/leagues/{league_id}/teams/{team_id}", cache=True)
 
+    def lineup(self, team_id: str) -> dict:
+        """Alineación GUARDADA de un equipo. Hallada por sondeo contra la cuenta real
+        (2026-09-28): la ruta NO lleva la liga, cuelga de `/teams/{id}` -- todas las variantes bajo
+        `/leagues/{liga}/teams/{id}/...` dan 404."""
+        return self.get(f"{COMP}/teams/{team_id}/lineup", cache=True)
+
     def market(self, league_id: str) -> list[dict]:
         return self.get(f"{COMP}/league/{league_id}/market", cache=True)
 
@@ -124,10 +130,12 @@ class FantasyAPI:
         return self.get(f"{COMP}/league/{league_id}/playerTeam/{player_team_id}/offer")
 
     def list_for_sale(self, league_id: str, player_team_id: str, price: int) -> Any:
-        """Pone un jugador tuyo a la venta. IRREVERSIBLE en el sentido de que empieza a
-        recibir ofertas del juego en cada ciclo de mercado (el de esta liga, sea cual sea su
-        hora) hasta que aceptes, rechaces, o lo retires. No verificado todavía contra una
-        cuenta real."""
+        """Pone un jugador tuyo a la venta. Empieza a recibir ofertas del juego en cada ciclo de
+        mercado hasta que aceptes, rechaces, o lo retires; NO se vende solo.
+
+        **Verificado contra una cuenta real (2026-09-28)**: `playerId` es el `playerTeamId`, no el
+        id del jugador. Devuelve el anuncio creado, y su `id` es el id del ANUNCIO -- lo que luego
+        piden `withdraw_from_market`/`accept_offer`, distinto del `playerTeamId`."""
         return self._write("POST", f"{COMP}/league/{league_id}/market/sell", {"playerId": player_team_id, "salePrice": price})
 
     def accept_offer(self, league_id: str, market_id: str, offer_id: str, amount: int) -> Any:
