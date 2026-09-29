@@ -626,7 +626,11 @@ def trends_report(world: World) -> str:
     peaking = analysis.sell_high_candidates(world.trends, mine)
     if peaking:
         lines.append(
-            f"{b('🏔️ En máximo, ya se frena, véndelos ya')}\n"
+            # Solo informa de que están en lo más alto; NO dice que haya que venderlos (petición
+            # del usuario, 2026-09-29: "que un jugador esté en máximos no significa que lo vendas
+            # ya"). Estar arriba es un dato; la decisión de vender depende de si lo necesitas en
+            # el once, de si quieres esperar más, y eso no lo sabe el bot.
+            f"{b('🏔️ En máximos: la subida ya se frena')}\n"
             + "\n".join(f"{b(p.name)} {i(analysis.trend_words(t))}" for p, t in peaking)
         )
     if not lines:

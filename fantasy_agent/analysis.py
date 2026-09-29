@@ -490,7 +490,14 @@ def project_value(current: int, trend: Trend, days: int = 14) -> int:
 
 
 def sell_high_candidates(trends: dict[str, tuple[Player, Trend]], mine: set[str]) -> list[tuple[Player, Trend]]:
-    """Jugadores tuyos que llevan una buena subida a 7 días pero ya se están frenando: venderlos ya."""
+    """Jugadores tuyos que llevan una buena subida a 7 días pero ya se están frenando: están en lo
+    más alto de su valor y ha dejado de crecer.
+
+    Es un AVISO, no una recomendación de venta (2026-09-29, el usuario: "que un jugador esté en
+    máximos no significa que lo vendas ya"). Que su valor toque techo no dice nada de si te hace
+    falta en el once ni de si prefieres aguantarlo; eso lo decide el usuario. El nombre de la
+    función se queda por compatibilidad, pero lo que devuelve son "los que están arriba", no "los
+    que hay que vender"."""
     out = [(p, t) for pid, (p, t) in trends.items() if pid in mine and t.d7 >= 8 and t.d1 <= 0.5]
     return sorted(out, key=lambda x: -x[1].d7)[:5]
 
