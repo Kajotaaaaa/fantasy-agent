@@ -162,12 +162,22 @@ async function healthCheck(env) {
   }
 }
 
+// Mantener despierto el panel web (2026-09-30): Render (plan free) duerme el servicio tras ~15 min
+// sin tráfico y, al dormirlo, BORRA su disco — con él, la sesión que le empuja el tick cada 30 min.
+// Sin este ping el panel estaría "sin sesión" la mitad del tiempo. /healthz no toca LaLiga.
+async function keepPanelAwake(env) {
+  if (!env.APP_BASE_URL) return;
+  await fetch(`${env.APP_BASE_URL.replace(/\/$/, "")}/healthz`).catch(() => {});
+}
+
 export default {
-  // Único cron (wrangler.toml): cada hora comprueba que el vigilante sigue vivo. "fantasy-snipe"
-  // (rebaja de último segundo) ya no lo dispara un cron de hora fija — lo arma dinámicamente el
-  // propio tick de GitHub Actions al detectar el cierre real de esta liga (2026-09-23).
+  // Dos crons (wrangler.toml): "13 * * * *" comprueba cada hora que el vigilante sigue vivo, y
+  // "*/10 * * * *" mantiene despierto el panel web. "fantasy-snipe" (rebaja de último segundo) no
+  // lo dispara ningún cron de hora fija — lo arma dinámicamente el propio tick de GitHub Actions
+  // al detectar el cierre real de esta liga (2026-09-23).
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(healthCheck(env));
+    if (event.cron === "13 * * * *") ctx.waitUntil(healthCheck(env));
+    else ctx.waitUntil(keepPanelAwake(env));
   },
 
   async fetch(request, env) {

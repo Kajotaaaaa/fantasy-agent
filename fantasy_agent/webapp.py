@@ -69,6 +69,12 @@ def _make_handler(s):
                 self.wfile.write(data)
                 return
 
+            if path == "/healthz":
+                # Ping del Worker cada 10 min para que Render no duerma el servicio (y borre la
+                # sesión con el disco). Sin token: solo dice si ya hay sesión, nunca la enseña.
+                self._json(200, {"ok": True, "session": s.tokens_file.exists()})
+                return
+
             if path == "/app/api/market":
                 token = (query.get("token") or [""])[0]
                 if not dashboard_token.verify(token):

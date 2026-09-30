@@ -86,10 +86,12 @@ jobs:
         if: always()
         run: |
           if [ -s data/tokens.json ] && [ -n "$APP_BASE_URL" ]; then
-            curl -sf -X POST "$APP_BASE_URL/internal/sync-tokens" \
+            curl -sf --max-time 90 --retry 2 -X POST "$APP_BASE_URL/internal/sync-tokens" \
               -H "X-Sync-Secret: $WEBAPP_SYNC_SECRET" -H "Content-Type: application/json" \
               --data-binary @data/tokens.json \
               || echo "⚠️ no se pudo sincronizar el panel web (seguirá con la sesión anterior)"
+          elif [ -z "$APP_BASE_URL" ]; then
+            echo "Panel web sin configurar (falta el secreto APP_BASE_URL): no se sincroniza."
           fi
         env:
           APP_BASE_URL: ${{ secrets.APP_BASE_URL }}

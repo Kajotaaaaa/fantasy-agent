@@ -776,8 +776,15 @@ opciones que se le dieron: local en su PC / servicio gratuito tipo Render / espe
   comprobado en `webapp.py.do_POST`). Necesario porque el disco de Render en plan free es
   EFÍMERO (se pierde al reiniciar/escalar a cero) — sin este empuje periódico, el panel se
   quedaría con la sesión con la que arrancó la última vez y acabaría caducando sin remedio.
-  Efecto colateral bueno: esta llamada HTTP cada ~30 min también evita que el servicio gratuito
-  de Render se quede dormido por inactividad (se "duerme" tras ~15 min sin tráfico).
+  **Corrección (2026-09-30): el empuje cada 30 min NO basta para mantenerlo despierto.** Render
+  free lo duerme tras ~15 min sin tráfico y al dormirlo pierde el disco — y con él la sesión —,
+  así que el panel habría estado "sin sesión" la mitad del tiempo. Arreglo: el Worker de
+  Cloudflare tiene un segundo cron (`*/10 * * * *`, `keepPanelAwake`) que hace `GET /healthz`
+  (sin token; solo responde `{"ok", "session": bool}`, nunca toca LaLiga). Si Render reinicia
+  igualmente (despliegue, mantenimiento), el panel dice "esperando el primer envío del
+  vigilante" hasta el siguiente tick. Hasta este día el panel nunca estuvo conectado: faltaban
+  los secretos `APP_BASE_URL`/`WEBAPP_SYNC_SECRET` en GitHub y el paso de sincronizar se saltaba
+  en silencio (ahora lo dice en el log).
 - **Token del panel (`dashboard_token.py`): HMAC-SHA256 firmado, SIN tenant_id** (a diferencia
   del `auth/dashboard_token.py` de sniperfantasy, que sí lleva tenant_id) — aquí solo hay una
   cuenta, así que el token solo prueba "esto lo emitió quien conoce `DASHBOARD_TOKEN_SECRET`".
